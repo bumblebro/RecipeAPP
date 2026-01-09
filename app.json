@@ -9,7 +9,13 @@
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.outvibe.RecipeAPP",
+      "appleTeamId": "5WJ6NJFUKB",
+      "infoPlist": {
+        "NSMicrophoneUsageDescription": "We need access to your microphone to enable voice commands for hands-free cooking.",
+        "NSSpeechRecognitionUsageDescription": "We need speech recognition to process your voice commands while cooking."
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -19,7 +25,11 @@
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
       },
       "edgeToEdgeEnabled": true,
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "package": "com.outvibe.RecipeAPP",
+      "permissions": [
+        "android.permission.RECORD_AUDIO"
+      ]
     },
     "web": {
       "output": "static",
