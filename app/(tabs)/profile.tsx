@@ -16,9 +16,11 @@ import {
   Share2,
   Heart,
   Star,
+  LogOut,
 } from "lucide-react-native";
 import { cn } from "../../lib/cn";
 import { useProfileStore } from "../../stores/useProfileStore";
+import { useAuth } from "../../hooks/useAuth";
 
 export default function ProfileScreen() {
   const insets = useSafeAreaInsets();
@@ -33,6 +35,7 @@ export default function ProfileScreen() {
     toggleShare,
     getUserRecipes,
   } = useProfileStore();
+  const { logout } = useAuth();
 
   const [editUsername, setEditUsername] = useState(username);
   const [editBio, setEditBio] = useState(bio);
@@ -85,20 +88,32 @@ export default function ProfileScreen() {
               </View>
 
               {/* Edit Button */}
-              <Pressable
-                onPress={() => {
-                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                  setEditUsername(username);
-                  setEditBio(bio);
-                  setShowEditModal(true);
-                }}
-                className="bg-neutral-800 rounded-lg px-4 py-2 flex-row items-center"
-              >
-                <View className="mr-2">
-                  <Edit3 size={16} color="#f59e0b" />
-                </View>
-                <Text className="text-amber-500 font-semibold">Edit</Text>
-              </Pressable>
+              {/* Actions */}
+              <View className="flex-row gap-3">
+                <Pressable
+                  onPress={() => {
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                    setEditUsername(username);
+                    setEditBio(bio);
+                    setShowEditModal(true);
+                  }}
+                  className="bg-neutral-800 rounded-lg px-4 py-2 flex-row items-center"
+                >
+                  <View className="mr-2">
+                    <Edit3 size={16} color="#f59e0b" />
+                  </View>
+                  <Text className="text-amber-500 font-semibold">Edit</Text>
+                </Pressable>
+
+                <Pressable
+                  onPress={() => {
+                    logout();
+                  }}
+                  className="bg-neutral-800 rounded-lg px-3 py-2 items-center justify-center"
+                >
+                  <LogOut size={18} color="#ef4444" />
+                </Pressable>
+              </View>
             </View>
 
             {/* Username */}

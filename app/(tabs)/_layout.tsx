@@ -47,6 +47,7 @@ export default function TabLayout() {
       <Tabs.Screen
         name="cookbook"
         options={{
+          href: null,
           title: "Cookbook",
           tabBarIcon: ({ color }) => <BookOpen size={24} color={color} />,
         }}
@@ -54,6 +55,7 @@ export default function TabLayout() {
       <Tabs.Screen
         name="grocery"
         options={{
+          href: null,
           title: "Grocery",
           tabBarIcon: ({ color }) => <ShoppingCart size={24} color={color} />,
         }}
@@ -61,6 +63,7 @@ export default function TabLayout() {
       <Tabs.Screen
         name="meals"
         options={{
+          href: null,
           title: "Meals",
           tabBarIcon: ({ color }) => <Calendar size={24} color={color} />,
         }}
@@ -68,6 +71,7 @@ export default function TabLayout() {
       <Tabs.Screen
         name="discover"
         options={{
+          href: null,
           title: "Discover",
           tabBarIcon: ({ color }) => <Users size={24} color={color} />,
         }}
