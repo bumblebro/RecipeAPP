@@ -231,7 +231,7 @@ export default function RecipePreviewScreen() {
         >
           <View style={styles.buttonContent}>
             <Text style={styles.buttonText}>Start Cooking</Text>
-            <Text style={styles.buttonSubtext}>AI Step-by-Step Guide</Text>
+            <Text style={styles.buttonSubtext}>Step-by-Step Guide</Text>
           </View>
         </Pressable>
       </View>

@@ -1,3 +1,4 @@
+import { Audio } from 'expo-av';
 import React, {
   useState,
   useEffect,
@@ -20,6 +21,7 @@ import {
   TextInput,
   Platform,
 } from "react-native";
+import ConfettiCannon from "react-native-confetti-cannon";
 import {
   SafeAreaView,
   useSafeAreaInsets,
@@ -40,8 +42,10 @@ import Animated, {
   interpolate,
   Extrapolate,
   Easing,
+  FadeInUp,
 } from "react-native-reanimated";
 import * as Haptics from "expo-haptics";
+import { MotiView, AnimatePresence } from "moti";
 import {
   X,
   Clock,
@@ -65,6 +69,7 @@ import {
   AlertTriangle,
   Lightbulb,
   Wrench,
+  Coffee,
 } from "lucide-react-native";
 
 // Voice recognition - conditional import for native
@@ -371,10 +376,15 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
     pauseTimer: pauseStoreTimer,
     resetTimer: resetStoreTimer,
     tickTimer,
+    adjustTimer,
     removeTimer,
     completeRecipe,
     resetSession,
-    hasActiveSession,
+    hasActiveSession: hasStoreActiveSession,
+    completedSteps: storedCompletedSteps,
+    setStepCompleted,
+    isPaused: isGlobalPaused,
+    togglePause: toggleGlobalPause,
   } = useCookingStore();
 
   const [recipeData, setRecipeData] = useState<RecipeData | null>(null);
@@ -383,13 +393,10 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
   const [error, setError] = useState<string | null>(null);
   const initializedRecipeRef = useRef<string | null>(null);
 
-  const [timeRemaining, setTimeRemaining] = useState<number | null>(null);
   const [isPaused, setIsPaused] = useState(false);
   const [isStepComplete, setIsStepComplete] = useState(false);
   const [isTimerComplete, setIsTimerComplete] = useState(false);
-  const [isTimerRunning, setIsTimerRunning] = useState(false);
   const [isCookingPaused, setIsCookingPaused] = useState(false); // Pause cooking mode
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const lastUpdateTimeRef = useRef<number>(Date.now());
   // Convert usedIngredientIds from store to Set for compatibility
   const checkedIngredients = useMemo(() => {
@@ -418,6 +425,33 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
   const shouldAutoRestartRef = useRef<boolean>(false);
   const isStoppingRef = useRef<boolean>(false);
   const isStartingRef = useRef<boolean>(false);
+  const soundRef = useRef<Audio.Sound | null>(null);
+  const playedTimerAlerts = useRef<Set<string>>(new Set());
+
+  const playCompletionSound = useCallback(async () => {
+    try {
+      // Unload previous sound if any
+      if (soundRef.current) {
+        await soundRef.current.unloadAsync();
+      }
+      const { sound } = await Audio.Sound.createAsync(
+        { uri: "https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3" },
+        { shouldPlay: true }
+      );
+      soundRef.current = sound;
+    } catch (error) {
+      console.error("Error playing sound:", error);
+    }
+  }, []);
+
+  // Cleanup sound on unmount
+  useEffect(() => {
+    return () => {
+      if (soundRef.current) {
+        soundRef.current.unloadAsync();
+      }
+    };
+  }, []);
 
   // Memoize loading messages to prevent recreation on every render
   const loadingMessages = useMemo(
@@ -435,6 +469,14 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
     ],
     []
   );
+
+  // Background Timers (Running on other steps)
+  const activeBackgroundTimers = useMemo(() => {
+    const currentStepId = `step-${currentStepIndex}`;
+    return timers.filter(
+      (t) => t.isRunning && !t.isComplete && t.stepId !== currentStepId
+    );
+  }, [timers, currentStepIndex]);
 
   const getDurationInSeconds = (
     step: ProcessedInstruction
@@ -475,44 +517,23 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
     return timers.find((t) => t.stepId === stepId) || null;
   }, [timers, currentStepIndex, recipeData]);
 
-  const startTimer = useCallback(() => {
-    if (timerRef.current) {
-      clearInterval(timerRef.current);
-    }
+  const timeRemaining = currentStepTimer?.remainingSeconds ?? null;
+  const isTimerRunning = currentStepTimer?.isRunning ?? false;
 
-    timerRef.current = setInterval(() => {
-      setTimeRemaining((prev) => {
-        if (prev === null || prev <= 1) {
-          if (timerRef.current) {
-            clearInterval(timerRef.current);
-            timerRef.current = null;
-          }
-          setIsStepComplete(true);
-          setIsTimerComplete(true);
-
-          // Update store timer to complete - get fresh timer from store
-          const store = useCookingStore.getState();
-          const stepId = `step-${currentStepIndex}`;
-          const timer = store.timers.find((t) => t.stepId === stepId);
-          if (timer) {
-            tickTimer(timer.id);
-          }
-
-          return 0;
-        }
-
-        // Update store timer every second - get fresh timer from store
-        const store = useCookingStore.getState();
-        const stepId = `step-${currentStepIndex}`;
-        const timer = store.timers.find((t) => t.stepId === stepId);
-        if (timer) {
-          tickTimer(timer.id);
-        }
-
-        return prev - 1;
-      });
+  // Master Timer Ticking Effect
+  useEffect(() => {
+    const tickInterval = setInterval(() => {
+      if (isGlobalPaused) return;
+      
+      // Find all running timers that aren't complete
+      const runningTimers = timers.filter(t => t.isRunning && !t.isComplete);
+      if (runningTimers.length > 0) {
+        runningTimers.forEach(t => tickTimer(t.id));
+      }
     }, 1000);
-  }, [currentStepIndex, tickTimer]);
+
+    return () => clearInterval(tickInterval);
+  }, [timers, tickTimer, isGlobalPaused]);
 
   const startStep = useCallback(
     (stepIndex: number) => {
@@ -530,7 +551,6 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
 
       // Create or update timer in store if step has duration
       if (duration && duration > 0) {
-        const currentStep = recipeData.processedInstructions[stepIndex];
         const stepId = `step-${stepIndex}`;
 
         // Check if timer already exists for this step
@@ -538,8 +558,6 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
 
         if (existingTimer) {
           // Use existing timer
-          setTimeRemaining(existingTimer.remainingSeconds);
-          setIsTimerRunning(existingTimer.isRunning);
           setIsPaused(!existingTimer.isRunning);
         } else {
           // Create new timer in store
@@ -551,13 +569,9 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
             isRunning: false,
             isComplete: false,
           });
-          setTimeRemaining(duration);
-          setIsTimerRunning(false);
-          setIsPaused(false);
+          setIsPaused(true);
         }
       } else {
-        setTimeRemaining(null);
-        setIsTimerRunning(false);
         setIsPaused(false);
       }
 
@@ -568,16 +582,51 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
     [recipeData, goToStep, timers, addTimer]
   );
 
+  // Handle timer completion (Haptics, UI State, Sound) for ALL timers
+  useEffect(() => {
+    // Check all timers, not just the current one
+    timers.forEach(timer => {
+      if (timer.isComplete && !playedTimerAlerts.current.has(timer.id)) {
+        // Mark as played first to prevent race conditions
+        playedTimerAlerts.current.add(timer.id);
+        
+        // Sound and Haptics
+        playCompletionSound();
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+
+        // Extract step index from stepId (e.g., "step-2" -> 2)
+        const stepIndexMatch = timer.stepId.match(/step-(\d+)/);
+        const targetIndex = stepIndexMatch ? parseInt(stepIndexMatch[1], 10) : -1;
+
+        if (targetIndex !== -1 && targetIndex !== currentStepIndex) {
+          // AUTO-NAVIGATE to completed step
+          startStep(targetIndex);
+        } else if (targetIndex === currentStepIndex) {
+          // If it's the current step, update UI states
+          setIsTimerComplete(true);
+          setIsStepComplete(true);
+        }
+      } else if (!timer.isComplete && playedTimerAlerts.current.has(timer.id)) {
+        // If timer was reset, allow it to sound again later
+        playedTimerAlerts.current.delete(timer.id);
+      }
+    });
+
+    // Update local state for current step specifically (for UI toggle)
+    if (currentStepTimer?.isComplete) {
+       setIsTimerComplete(true);
+    } else {
+       setIsTimerComplete(false);
+    }
+  }, [timers, currentStepIndex, currentStepTimer?.isComplete, playCompletionSound, startStep]);
+
   const handleNext = useCallback(() => {
     if (!recipeData || !recipeData.processedInstructions) return;
-    if (timerRef.current) {
-      clearInterval(timerRef.current);
-      timerRef.current = null;
-    }
 
     // Add current step to completed steps if not already completed
     setCompletedSteps((prev) => {
       if (!prev.includes(currentStepIndex)) {
+        setStepCompleted(currentStepIndex, true);
         return [...prev, currentStepIndex];
       }
       return prev;
@@ -590,13 +639,7 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
       return;
     }
 
-    const nextStep = currentStepIndex + 1;
-    const duration = getDurationInSeconds(
-      recipeData.processedInstructions[nextStep]
-    );
-
     goToNextStep();
-    setTimeRemaining(duration || null);
     setIsStepComplete(false);
     setIsTimerComplete(false);
   }, [recipeData, currentStepIndex, goToNextStep, completeRecipe]);
@@ -608,16 +651,8 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
       currentStepIndex <= 0
     )
       return;
-    if (timerRef.current) {
-      clearInterval(timerRef.current);
-      timerRef.current = null;
-    }
-    const prevStep = currentStepIndex - 1;
-    const duration = getDurationInSeconds(
-      recipeData.processedInstructions[prevStep]
-    );
+    
     goToPreviousStep();
-    setTimeRemaining(duration || null);
     setIsPaused(false);
     setIsStepComplete(false);
     setIsTimerComplete(false);
@@ -746,29 +781,21 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
       // Currently paused - Resume timer
       startStoreTimer(currentStepTimer.id);
       setIsPaused(false);
-      setIsTimerRunning(true);
-      startTimer();
     } else {
       // Currently running - Pause timer
       pauseStoreTimer(currentStepTimer.id);
-      if (timerRef.current) {
-        clearInterval(timerRef.current);
-        timerRef.current = null;
-      }
       setIsPaused(true);
-      setIsTimerRunning(false);
     }
   }, [
     isPaused,
     currentStepTimer,
     startStoreTimer,
     pauseStoreTimer,
-    startTimer,
   ]);
 
   const handleCompleteStep = () => {
     // Check if timer is still running and has time remaining
-    const timerStillRunning = timerRef.current !== null;
+    const timerStillRunning = isTimerRunning;
     const hasTimeRemaining = timeRemaining !== null && timeRemaining > 0;
 
     if (timerStillRunning && hasTimeRemaining) {
@@ -787,32 +814,28 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
             text: "Complete Anyway",
             style: "destructive",
             onPress: () => {
-              // Complete the step
-              if (timerRef.current) {
-                clearInterval(timerRef.current);
-                timerRef.current = null;
+              // Pause timer in store if it's running
+              if (currentStepTimer) {
+                pauseStoreTimer(currentStepTimer.id);
               }
+              setIsPaused(true);
+
               setIsStepComplete(true);
-              setTimeRemaining(0);
-              setIsTimerRunning(false);
               setCompletedSteps((prev) => {
                 if (!prev.includes(currentStepIndex)) {
+                  setStepCompleted(currentStepIndex, true);
                   return [...prev, currentStepIndex];
                 }
                 return prev;
               });
+
               // Move to next step
               if (
                 recipeData &&
                 recipeData.processedInstructions &&
                 currentStepIndex < recipeData.processedInstructions.length - 1
               ) {
-                const nextStep = currentStepIndex + 1;
-                const duration = getDurationInSeconds(
-                  recipeData.processedInstructions[nextStep]
-                );
                 goToNextStep();
-                setTimeRemaining(duration || null);
                 setIsStepComplete(false);
                 setIsTimerComplete(false);
               } else {
@@ -829,16 +852,10 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
       );
     } else {
       // Timer is not running or has finished, complete normally
-      if (timerRef.current) {
-        clearInterval(timerRef.current);
-        timerRef.current = null;
-      }
-
       setIsStepComplete(true);
-      setTimeRemaining(0);
-      setIsTimerRunning(false);
       setCompletedSteps((prev) => {
         if (!prev.includes(currentStepIndex)) {
+          setStepCompleted(currentStepIndex, true);
           return [...prev, currentStepIndex];
         }
         return prev;
@@ -994,7 +1011,7 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
         // Only start cooking if we don't have an active session for this recipe
         const store = useCookingStore.getState();
         if (!store.recipe || store.recipe.title !== mappedRecipe.title) {
-          startCooking(mappedRecipe);
+          startCooking(mappedRecipe, recipe);
         }
       } catch (error) {
         console.error("Error mapping recipe to store format:", error);
@@ -1002,8 +1019,14 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
       }
 
       setIsLoading(false);
-      setCompletedSteps([]);
-      startStep(0);
+      
+      const store = useCookingStore.getState();
+      const isResuming = store.recipe && store.recipe.title === (recipe as RecipeData).name;
+      const initialSteps = isResuming ? store.completedSteps : [];
+      const initialStep = isResuming ? store.currentStepIndex : 0;
+      
+      setCompletedSteps(initialSteps);
+      startStep(initialStep);
     } else {
       setError("No recipe data provided");
       setIsLoading(false);
@@ -1011,82 +1034,7 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [recipe?.name, recipe?.processedInstructions?.length]); // Only depend on stable recipe properties
 
-  useEffect(() => {
-    if (recipeData && recipeData.processedInstructions) {
-      const currentStep = recipeData.processedInstructions[currentStepIndex];
 
-      // Check store timer state first
-      const store = useCookingStore.getState();
-      const stepId = `step-${currentStepIndex}`;
-      const storeTimer = store.timers.find((t) => t.stepId === stepId);
-
-      if (
-        currentStep &&
-        timeRemaining !== null &&
-        timeRemaining > 0 &&
-        !isPaused &&
-        storeTimer?.isRunning
-      ) {
-        startTimer();
-      } else {
-        // Stop timer if paused or not running in store
-        if (timerRef.current) {
-          clearInterval(timerRef.current);
-          timerRef.current = null;
-        }
-      }
-    }
-
-    return () => {
-      if (timerRef.current) {
-        clearInterval(timerRef.current);
-        timerRef.current = null;
-      }
-    };
-  }, [
-    timeRemaining,
-    isPaused,
-    currentStepIndex,
-    recipeData,
-    startTimer,
-    timers,
-  ]);
-
-  // Sync local timeRemaining with store timer
-  useEffect(() => {
-    if (!currentStepTimer) {
-      setIsTimerRunning(false);
-      setIsPaused(false);
-      return;
-    }
-
-    // Sync remaining time from store
-    setTimeRemaining(currentStepTimer.remainingSeconds);
-
-    if (currentStepTimer.isComplete) {
-      setIsTimerComplete(true);
-      setTimeRemaining(0);
-      setIsTimerRunning(false);
-      setIsPaused(false);
-      // Clear interval if running
-      if (timerRef.current) {
-        clearInterval(timerRef.current);
-        timerRef.current = null;
-      }
-    } else if (currentStepTimer.isRunning) {
-      setIsTimerRunning(true);
-      setIsPaused(false);
-    } else {
-      // Timer is paused
-      setIsTimerRunning(false);
-      setIsPaused(true);
-      // Clear interval if running
-      if (timerRef.current) {
-        clearInterval(timerRef.current);
-        timerRef.current = null;
-      }
-    }
-  }, [currentStepTimer]);
 
   // All hooks must be called before any conditional returns
   const processedInstructions = recipeData?.processedInstructions || [];
@@ -1099,7 +1047,7 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
       Speech.stop();
       // Use speech field if available, otherwise fall back to action
       const textToSpeak = currentStep.speech || currentStep.action;
-      if (textToSpeak) {
+      if (textToSpeak && !isGlobalPaused) {
         const speechOptions: Speech.SpeechOptions = {
           language: "en",
           pitch: 1.0,
@@ -1125,6 +1073,7 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
     currentStep?.action,
     isMuted,
     selectedVoice,
+    isGlobalPaused,
   ]);
 
   const initialServings = useMemo(() => {
@@ -1536,27 +1485,28 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
     }
 
     if (timer) {
-      // Update local state first to match store
-      setTimeRemaining(timer.remainingSeconds);
-      setIsTimerRunning(false);
-      setIsPaused(false);
-      setIsTimerComplete(false);
-
-      // Start the timer in store
-      startStoreTimer(timer.id);
-
-      // Update local state after starting
-      setIsTimerRunning(true);
-
-      // Start the interval - this will also update the store via tickTimer
-      startTimer();
+      if (timer.isComplete) {
+        // Restart logic
+        resetStoreTimer(timer.id);
+        startStoreTimer(timer.id);
+        setIsPaused(false);
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      } else if (timer.isRunning) {
+        pauseStoreTimer(timer.id);
+        setIsPaused(true);
+      } else {
+        startStoreTimer(timer.id);
+        setIsPaused(false);
+      }
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     }
   }, [
     recipeData,
     currentStepIndex,
     addTimer,
     startStoreTimer,
-    startTimer,
+    pauseStoreTimer,
+    resetStoreTimer,
     getDurationInSeconds,
   ]);
 
@@ -1619,6 +1569,7 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
   // Voice command handlers
   const handleVoiceCommand = useCallback(
     (command: string) => {
+      if (isGlobalPaused) return;
       // Prevent processing if we're already processing or too soon after last command
       const now = Date.now();
       if (
@@ -1713,13 +1664,12 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
         return;
       }
 
-      // Pause timer
       if (
         lowerCommand === "pause timer" ||
         lowerCommand === "pause" ||
         lowerCommand.startsWith("pause timer")
       ) {
-        if (timerRef.current && !isPaused) {
+        if (isTimerRunning && !isPaused) {
           togglePause();
         }
         setTimeout(() => {
@@ -1736,7 +1686,7 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
         lowerCommand.startsWith("resume timer") ||
         lowerCommand.startsWith("start timer")
       ) {
-        if (isPaused && timerRef.current) {
+        if (isPaused && currentStepTimer?.isRunning) {
           togglePause();
         } else if (!isTimerRunning && timeRemaining !== null) {
           handleStartTimer();
@@ -1839,6 +1789,7 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
       handleStartTimer,
       selectedVoice,
       stopRecognitionBeforeSpeaking,
+      isGlobalPaused,
     ]
   );
 
@@ -2193,8 +2144,10 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
 
   // Handle add 1 minute
   const handleAddMinute = useCallback(() => {
-    setTimeRemaining((prev) => (prev !== null ? prev + 60 : 60));
-  }, []);
+    if (currentStepTimer) {
+      adjustTimer(currentStepTimer.id, 60);
+    }
+  }, [currentStepTimer, adjustTimer]);
 
   // Handle exit with confirmation
   const handleExit = useCallback(() => {
@@ -2202,10 +2155,6 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
   }, []);
 
   const confirmExit = useCallback(() => {
-    if (timerRef.current) {
-      clearInterval(timerRef.current);
-      timerRef.current = null;
-    }
     // Stop any ongoing speech
     Speech.stop();
     if (keepAwakeActive) {
@@ -2310,12 +2259,34 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
             </Text>
           </View>
 
-          {/* Time Display */}
-          <View className="flex-row items-center bg-neutral-800/80 rounded-full px-3 py-1.5">
-            <Clock size={14} color="#9ca3af" />
-            <Text className="text-neutral-400 text-sm ml-1.5">
-              {totalTimeMinutes} min
-            </Text>
+          {/* Time & Pause Display */}
+          <View className="flex-row items-center gap-2">
+            <View className="flex-row items-center bg-neutral-800/80 rounded-full px-3 py-1.5">
+              <Clock size={14} color="#9ca3af" />
+              <Text className="text-neutral-400 text-sm ml-1.5">
+                {totalTimeMinutes} min
+              </Text>
+            </View>
+
+            {/* Global Pause Button */}
+            <Pressable
+              onPress={() => {
+                Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+                if (!isGlobalPaused) {
+                  Speech.stop();
+                }
+                toggleGlobalPause();
+              }}
+              className={`w-10 h-10 rounded-full items-center justify-center active:opacity-70 ${
+                isGlobalPaused ? "bg-amber-500" : "bg-neutral-800/80"
+              }`}
+            >
+              {isGlobalPaused ? (
+                <Play size={20} color="#000000" fill="#000000" />
+              ) : (
+                <Coffee size={20} color="#9ca3af" />
+              )}
+            </Pressable>
           </View>
         </View>
 
@@ -2331,6 +2302,33 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
             {currentStepIndex + 1} / {processedInstructions.length}
           </Text>
         </View>
+
+        {/* Background Timers Strip */}
+        {activeBackgroundTimers.length > 0 && (
+          <Animated.View 
+            entering={FadeInUp.duration(300)}
+            className="px-4 pb-3 flex-row flex-wrap gap-2"
+          >
+            {activeBackgroundTimers.map((timer) => (
+              <Pressable
+                key={timer.id}
+                onPress={() => {
+                  const stepIdx = processedInstructions.findIndex((_, idx) => `step-${idx}` === timer.stepId);
+                  if (stepIdx !== -1) {
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                    startStep(stepIdx);
+                  }
+                }}
+                className="flex-row items-center bg-amber-500/10 border border-amber-500/20 rounded-full px-3 py-1.5"
+              >
+                <Timer size={14} color="#f59e0b" />
+                <Text className="text-amber-500 text-xs font-bold ml-1.5">
+                  Step {processedInstructions.findIndex((_, idx) => `step-${idx}` === timer.stepId) + 1}: {formatTime(timer.remainingSeconds)}
+                </Text>
+              </Pressable>
+            ))}
+          </Animated.View>
+        )}
 
         {/* Step Indicators */}
         <View className="flex-row items-center justify-center gap-2 py-2">
@@ -2370,13 +2368,13 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
           bounces={true}
           alwaysBounceVertical={true}
           keyboardShouldPersistTaps="handled"
-          scrollEnabled={true}
+          scrollEnabled={false}
           removeClippedSubviews={false}
         >
           {currentStep && (
-            <View className="px-5 py-6">
+            <View className="px-5 py-2">
               {/* Step Image */}
-              {currentStep.animationType &&
+              {/* {currentStep.animationType &&
                 getActionImageSource(currentStep.animationType) && (
                   <View className="h-48 mb-4 rounded-2xl overflow-hidden bg-neutral-900">
                     <Image
@@ -2386,7 +2384,7 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
                     />
                     <View className="absolute inset-0 bg-gradient-to-b from-transparent via-transparent to-neutral-950/80" />
                   </View>
-                )}
+                )} */}
 
               {/* Action Badge */}
               {currentStep.animationType && (
@@ -2474,17 +2472,24 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
                   </View>
                 )}
 
-              {/* Equipment */}
+              {/* Equipment Needed for This Step */}
               {currentStep.equipment && currentStep.equipment.length > 0 && (
-                <View className="flex-row items-start bg-neutral-800/50 rounded-xl px-4 py-3 mb-4">
-                  <Wrench size={18} color="#9ca3af" className="mr-3 mt-0.5" />
-                  <View className="flex-1 flex-row flex-wrap gap-2">
+                <View className="bg-neutral-800/40 rounded-lg px-4 py-3 mb-4">
+                  <View className="flex-row items-center mb-2">
+                    <Wrench size={16} color="#60a5fa" className="mr-2" />
+                    <Text className="text-blue-400 text-sm font-semibold uppercase tracking-wide">
+                      Equipment Needed
+                    </Text>
+                  </View>
+                  <View className="flex-row flex-wrap gap-2 mt-2">
                     {currentStep.equipment.map((item, index) => (
                       <View
                         key={`eq-${item}-${index}`}
-                        className="bg-neutral-700/50 rounded-full px-2.5 py-1"
+                        className="bg-neutral-700/50 rounded-full px-3 py-1.5"
                       >
-                        <Text className="text-neutral-300 text-xs">{item}</Text>
+                        <Text className="text-white text-sm font-medium">
+                          {item}
+                        </Text>
                       </View>
                     ))}
                   </View>
@@ -2539,35 +2544,54 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
 
               {/* Timer Button */}
               {currentStep.duration && (
-                <Pressable
-                  onPress={handleStartTimer}
-                  disabled={isTimerRunning}
-                  className={`rounded-2xl px-6 py-4 mt-2 ${
-                    isTimerRunning ? "bg-neutral-700/50" : "bg-amber-500"
-                  } active:opacity-80`}
-                  onPressIn={() =>
-                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium)
-                  }
-                >
-                  <View className="flex-row items-center justify-center">
-                    <Timer
-                      size={22}
-                      color={isTimerRunning ? "#9ca3af" : "#000000"}
-                      className="mr-2"
-                    />
-                    <Text
-                      className={`text-lg font-semibold ${
-                        isTimerRunning ? "text-neutral-400" : "text-black"
-                      }`}
-                    >
-                      {isTimerRunning
-                        ? "Timer Running"
-                        : `Start ${formatTime(
-                            getDurationInSeconds(currentStep) || 0
-                          )} Timer`}
-                    </Text>
-                  </View>
-                </Pressable>
+                  <Pressable
+                    onPress={handleStartTimer}
+                    className={`rounded-2xl px-6 py-4 mt-2 ${
+                      isTimerComplete 
+                        ? "bg-green-500" 
+                        : isTimerRunning 
+                          ? "bg-neutral-800 border border-amber-500/30" 
+                          : "bg-amber-500"
+                    } active:opacity-80`}
+                    onPressIn={() =>
+                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium)
+                    }
+                  >
+                    <View className="flex-row items-center justify-center">
+                      {isTimerComplete ? (
+                        <CheckCircle2 size={22} color="#000000" className="mr-2" />
+                      ) : isTimerRunning ? (
+                        <Pause
+                          size={22}
+                          color="#ffffff"
+                          className="mr-2"
+                        />
+                      ) : (
+                        <Timer
+                          size={22}
+                          color="#000000"
+                          className="mr-2"
+                        />
+                      )}
+                      <Text
+                        className={`text-lg font-semibold ${
+                          isTimerComplete
+                            ? "text-black"
+                            : isTimerRunning
+                            ? "text-neutral-400"
+                            : "text-black"
+                        }`}
+                      >
+                        {isTimerComplete
+                          ? "Timer Completed - Tap to Restart"
+                          : isTimerRunning
+                          ? `${formatTime(timeRemaining || 0)} Remaining`
+                          : `Start ${formatTime(
+                              getDurationInSeconds(currentStep) || 0
+                            )} Timer`}
+                      </Text>
+                    </View>
+                  </Pressable>
               )}
             </View>
           )}
@@ -2619,10 +2643,6 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
             </Pressable>
             <Pressable
               onPress={handleNext}
-              disabled={
-                currentStepIndex ===
-                (recipeData?.processedInstructions?.length || 1) - 1
-              }
               className={`h-14 px-8 rounded-full items-center justify-center flex-row ${
                 currentStepIndex ===
                 (recipeData?.processedInstructions?.length || 1) - 1
@@ -2656,22 +2676,47 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
           </View>
         </View>
 
-        {/* Cooking Paused Overlay */}
-        {isCookingPaused && (
-          <Pressable
-            className="absolute inset-0 bg-black/70 items-center justify-center"
-            onPress={() => setIsCookingPaused(false)}
-          >
-            <View className="bg-neutral-900/95 rounded-2xl px-8 py-6 items-center">
-              <Text className="text-white text-2xl font-bold mb-2">
-                ⏸️ Cooking Paused
-              </Text>
-              <Text className="text-neutral-400 text-base">
-                Tap anywhere to resume
-              </Text>
-            </View>
-          </Pressable>
-        )}
+        {/* Session Paused Overlay */}
+        <AnimatePresence>
+          {isGlobalPaused && (
+            <MotiView
+              from={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="absolute inset-0 z-[100] items-center justify-center p-6"
+              style={{ backgroundColor: "rgba(10, 10, 10, 0.95)" }}
+            >
+              <MotiView
+                from={{ scale: 0.9, opacity: 0, translateY: 20 }}
+                animate={{ scale: 1, opacity: 1, translateY: 0 }}
+                transition={{ type: "timing", duration: 400 }}
+                className="items-center w-full"
+              >
+                <View className="w-24 h-24 rounded-full bg-amber-500/10 items-center justify-center mb-6 border border-amber-500/20">
+                  <Coffee size={48} color="#f59e0b" />
+                </View>
+                
+                <Text className="text-white text-3xl font-bold text-center mb-4">
+                  Kitchen Break
+                </Text>
+                
+                <Text className="text-neutral-400 text-lg text-center leading-relaxed mb-10 px-4">
+                  "No stress. I’ve caught your place."{"\n"}
+                  All timers and background guides are paused while you handle real life.
+                </Text>
+
+                <Pressable
+                  onPress={toggleGlobalPause}
+                  className="bg-amber-500 h-16 rounded-2xl px-12 flex-row items-center justify-center active:bg-amber-600 w-full"
+                  onPressIn={() => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium)}
+                >
+                  <Play size={24} color="#000000" fill="#000000" className="mr-3" />
+                  <Text className="text-black text-xl font-bold">Resume Cooking</Text>
+                </Pressable>
+              </MotiView>
+            </MotiView>
+          )}
+        </AnimatePresence>
       </SafeAreaView>
 
       {/* Modals */}
@@ -3041,103 +3086,130 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
         animationType="fade"
         onRequestClose={() => setShowCompletionScreen(false)}
       >
-        <View className="flex-1 bg-black/90 items-center justify-center">
+        <View className="flex-1 bg-black/95 items-center justify-center">
+          {/* Confetti Effect */}
+          <View className="absolute inset-0 z-0" pointerEvents="none">
+            <ConfettiCannon
+              count={200}
+              origin={{ x: SCREEN_WIDTH / 2, y: -20 }}
+              fadeOut={true}
+              autoStart={true}
+            />
+          </View>
+
           <ScrollView
-            className="flex-1 w-full"
+            className="flex-1 w-full z-10"
             contentContainerStyle={{
               alignItems: "center",
               justifyContent: "center",
-              paddingVertical: 40,
+              paddingVertical: 60,
             }}
+            showsVerticalScrollIndicator={false}
           >
-            {/* Confetti Effect Placeholder */}
-            <View className="absolute inset-0" pointerEvents="none">
-              {/* Confetti animation would go here */}
-            </View>
-
-            {/* Success Icon */}
-            <View className="w-32 h-32 rounded-full bg-green-500/20 items-center justify-center mb-6">
-              <View className="w-24 h-24 rounded-full bg-green-500/30 items-center justify-center">
-                <Text className="text-6xl">🧑‍🍳</Text>
+            <Animated.View 
+              entering={FadeInUp.delay(300).duration(800)}
+              className="items-center w-full px-6"
+            >
+              {/* Success Icon */}
+              <View className="w-40 h-40 rounded-full bg-amber-500/20 items-center justify-center mb-8 border border-amber-500/30">
+                <View className="w-32 h-32 rounded-full bg-amber-500/40 items-center justify-center shadow-2xl shadow-amber-500/50">
+                  <ChefHat size={64} color="#f59e0b" />
+                </View>
               </View>
-            </View>
 
-            {/* Title */}
-            <Text className="text-4xl font-bold text-white mb-2 text-center">
-              Bon Appétit!
-            </Text>
+              {/* Title */}
+              <Text className="text-5xl font-black text-white mb-2 text-center tracking-tight">
+                Bon Appétit!
+              </Text>
 
-            {/* Subtitle */}
-            <Text className="text-lg text-neutral-400 mb-2 text-center">
-              You've completed
-            </Text>
+              {/* Success Message */}
+              <Text className="text-xl text-neutral-400 mb-8 text-center font-medium">
+                You've mastered this recipe! 🥂
+              </Text>
 
-            {/* Recipe Name */}
-            <Text className="text-2xl font-semibold text-amber-400 mb-8 text-center px-4">
-              {recipeData?.name || "Recipe"}
-            </Text>
-
-            {/* Stats */}
-            <View className="flex-row gap-8 mb-8">
-              <View className="items-center">
-                <Text className="text-3xl font-bold text-white">
-                  {processedInstructions.length}
+              {/* Cooked Details Card */}
+              <View className="w-full bg-neutral-900/80 border border-neutral-800 rounded-[40px] p-8 mb-10 shadow-2xl">
+                <Text className="text-amber-500 text-xs font-bold uppercase tracking-[4px] mb-4 text-center">
+                  Cooked Details
                 </Text>
-                <Text className="text-neutral-500 text-sm">Steps</Text>
+                <Text className="text-2xl font-bold text-white mb-8 text-center">
+                  {recipeData?.name || "Delicious Meal"}
+                </Text>
+
+                <View className="flex-row justify-between items-center px-2">
+                  <View className="items-center flex-1">
+                    <View className="w-12 h-12 bg-neutral-800 rounded-2xl items-center justify-center mb-3">
+                      <ListChecks size={24} color="#9ca3af" />
+                    </View>
+                    <Text className="text-2xl font-bold text-white">
+                      {processedInstructions.length}
+                    </Text>
+                    <Text className="text-neutral-500 text-xs font-semibold uppercase">Steps</Text>
+                  </View>
+
+                  <View className="w-[1px] h-12 bg-neutral-800 mx-4" />
+
+                  <View className="items-center flex-1">
+                    <View className="w-12 h-12 bg-neutral-800 rounded-2xl items-center justify-center mb-3">
+                      <Clock size={24} color="#9ca3af" />
+                    </View>
+                    <Text className="text-2xl font-bold text-white">
+                      {totalTimeMinutes}
+                    </Text>
+                    <Text className="text-neutral-500 text-xs font-semibold uppercase">Minutes</Text>
+                  </View>
+
+                  <View className="w-[1px] h-12 bg-neutral-800 mx-4" />
+
+                  <View className="items-center flex-1">
+                    <View className="w-12 h-12 bg-neutral-800 rounded-2xl items-center justify-center mb-3">
+                      <Utensils size={24} color="#9ca3af" />
+                    </View>
+                    <Text className="text-2xl font-bold text-white">
+                      {recipeData?.ingredients?.length || 0}
+                    </Text>
+                    <Text className="text-neutral-500 text-xs font-semibold uppercase">Items</Text>
+                  </View>
+                </View>
               </View>
-              <View className="w-px h-12 bg-neutral-800" />
-              <View className="items-center">
-                <Text className="text-3xl font-bold text-white">
-                  {totalTimeMinutes}
-                </Text>
-                <Text className="text-neutral-500 text-sm">Minutes</Text>
-              </View>
-              <View className="w-px h-12 bg-neutral-800" />
-              <View className="items-center">
-                <Text className="text-3xl font-bold text-white">
-                  {recipeData?.ingredients?.length || 0}
-                </Text>
-                <Text className="text-neutral-500 text-sm">Ingredients</Text>
-              </View>
-            </View>
 
-            {/* Buttons */}
-            <View className="w-full px-4 gap-3">
-              <Pressable
-                onPress={() => {
-                  // TODO: Save recipe
-                  setShowCompletionScreen(false);
-                }}
-                className="w-full h-14 bg-green-500 rounded-2xl items-center justify-center"
-              >
-                <Text className="text-black font-bold text-base">
-                  💾 Save Recipe
-                </Text>
-              </Pressable>
-              <Pressable
-                onPress={() => {
-                  setShowCompletionScreen(false);
-                  router.back();
-                }}
-                className="w-full h-14 bg-amber-500 rounded-2xl items-center justify-center"
-              >
-                <Text className="text-black font-bold text-base">
-                  🏠 Back to Recipes
-                </Text>
-              </Pressable>
-              <Pressable
-                onPress={() => {
-                  resetSession();
-                  setShowCompletionScreen(false);
-                  startStep(0);
-                }}
-                className="w-full h-14 bg-neutral-800 rounded-2xl items-center justify-center"
-              >
-                <Text className="text-gray-300 font-semibold text-base">
-                  🔄 Cook Again
-                </Text>
-              </Pressable>
-            </View>
+              {/* Buttons */}
+              <View className="w-full gap-4">
+                <Pressable
+                  onPress={() => {
+                    setShowCompletionScreen(false);
+                    router.replace("/(tabs)");
+                  }}
+                  className="w-full h-16 bg-amber-500 rounded-3xl items-center justify-center shadow-xl shadow-amber-500/20 active:opacity-90"
+                >
+                  <Text className="text-black font-black text-lg uppercase tracking-wider">
+                    🏠 Back Home
+                  </Text>
+                </Pressable>
+                
+                <View className="flex-row gap-4">
+                  <Pressable
+                    onPress={() => {
+                      setShowCompletionScreen(false);
+                      router.replace("/(tabs)/saved");
+                    }}
+                    className="flex-1 h-14 bg-neutral-800 rounded-3xl items-center justify-center border border-neutral-700 active:bg-neutral-700"
+                  >
+                    <Text className="text-white font-bold">📖 Cookbook</Text>
+                  </Pressable>
+                  <Pressable
+                    onPress={() => {
+                      resetSession();
+                      setShowCompletionScreen(false);
+                      startStep(0);
+                    }}
+                    className="flex-1 h-14 bg-neutral-900 rounded-3xl items-center justify-center border border-neutral-800 active:bg-neutral-800"
+                  >
+                    <Text className="text-neutral-400 font-bold">🔄 Start Over</Text>
+                  </Pressable>
+                </View>
+              </View>
+            </Animated.View>
           </ScrollView>
         </View>
       </Modal>

@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useEffect } from "react";
 import {
   View,
   Text,
@@ -8,30 +8,45 @@ import {
 } from "react-native";
 import { useRouter, useLocalSearchParams } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { api } from "../features/api/api.client";
 
 const SERVING_OPTIONS = [1, 2, 3, 4, 6, 8, 10, 12];
 
 export default function ServingSizeScreen() {
   const router = useRouter();
   const params = useLocalSearchParams();
-  const [selectedServings, setSelectedServings] = useState<number>(4);
   const [isLoading, setIsLoading] = useState(false);
 
-  let recipe = null;
-  if (typeof params.recipe === "string") {
-    try {
-      recipe = JSON.parse(params.recipe);
-    } catch (e) {
-      console.error("Failed to parse recipe JSON:", e);
+  const recipe = useMemo(() => {
+    if (typeof params.recipe === "string") {
+      try {
+        return JSON.parse(params.recipe);
+      } catch (e) {
+        console.error("Failed to parse recipe JSON:", e);
+      }
     }
-  }
+    return null;
+  }, [params.recipe]);
 
   const originalServings = useMemo(() => {
-    if (!recipe?.yield) return 4;
-    const yieldStr = String(recipe.yield);
+    // Check multiple common field names for yield/servings
+    const yieldSource = recipe?.yield || recipe?.recipeYield || recipe?.servings;
+    if (!yieldSource) return 4;
+    
+    const yieldStr = String(yieldSource);
+    // Find the first number in the string
     const match = yieldStr.match(/(\d+)/);
     return match ? parseInt(match[1], 10) : 4;
-  }, [recipe?.yield]);
+  }, [recipe?.yield, recipe?.recipeYield, recipe?.servings]);
+
+  const [selectedServings, setSelectedServings] = useState<number>(originalServings);
+
+  // Sync selectedServings with originalServings when recipe loads
+  useEffect(() => {
+    if (originalServings) {
+      setSelectedServings(originalServings);
+    }
+  }, [originalServings]);
 
   const handleContinue = async () => {
     if (!recipe) return;
@@ -39,45 +54,30 @@ export default function ServingSizeScreen() {
     setIsLoading(true);
 
     try {
-      // Process the recipe if not already processed
-      let processedRecipe = recipe;
+      // Always process to ensure scaling is applied by the AI
+      const response = await api.post<any>("recipe/process", {
+        instructions: recipe.instructions,
+        ingredients: recipe.ingredients,
+        targetServings: selectedServings,
+        originalServings: originalServings,
+      });
 
-      if (!recipe.processedInstructions) {
-        const processResponse = await fetch(
-          "http://localhost:4000/api/process-recipe",
-          // "https://recipeserver.guidemyrecipe.com/api/process-recipe",
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              instructions: recipe.instructions,
-              ingredients: recipe.ingredients,
-            }),
-          }
-        );
-        console.log("processResponse", processResponse);
-
-        if (!processResponse.ok) {
-          throw new Error("Failed to process the recipe.");
-        }
-
-        const processedData = await processResponse.json();
-        processedRecipe = {
-          ...recipe,
-          processedInstructions: processedData.processedInstructions,
-        };
+      if (!response.success) {
+        throw new Error("Failed to process the recipe.");
       }
 
-      // Add serving size info
+      // Add serving size info to the processed data
       const finalRecipe = {
-        ...processedRecipe,
+        ...recipe,
+        processedInstructions: response.processedInstructions,
+        scaledIngredients: response.scaledIngredients,
         selectedServings,
         originalServings,
       };
 
-      // Navigate to recipe screen with processed recipe and serving size
+      // Navigate to ingredients needed screen (Prep phase)
       router.push({
-        pathname: "/recipe",
+        pathname: "/ingredients-needed",
         params: { recipe: JSON.stringify(finalRecipe) },
       });
     } catch (error: any) {
@@ -137,7 +137,7 @@ export default function ServingSizeScreen() {
                   style={[
                     styles.servingButtonText,
                     selectedServings === servings &&
-                      styles.servingButtonTextActive,
+                    styles.servingButtonTextActive,
                   ]}
                 >
                   {servings}

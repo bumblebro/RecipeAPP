@@ -11,6 +11,8 @@ import { useFonts } from 'expo-font';
 import { Roboto_400Regular, Roboto_500Medium, Roboto_700Bold } from '@expo-google-fonts/roboto';
 
 import { useAuthStore, initializeAuthListener } from '../stores/useAuthStore';
+import { useSubscriptionStore } from '../stores/useSubscriptionStore';
+import { revenueCatService } from '../lib/revenuecat-service';
 
 import '../app/global.css';
 
@@ -20,17 +22,21 @@ SplashScreen.preventAutoHideAsync();
 /**
  * Auth-aware navigation handler
  * Redirects users based on authentication state
+ * Shows paywall after login for non-subscribers
  */
 function useProtectedRoute() {
   const { isAuthenticated, isInitialized } = useAuthStore();
+  const isSubscribed = useSubscriptionStore((s) => s.isSubscribed);
   const segments = useSegments();
   const router = useRouter();
+  const [hasShownPaywall, setHasShownPaywall] = useState(false);
 
   useEffect(() => {
     // Wait until auth state is initialized
     if (!isInitialized) return;
 
     const inAuthGroup = (segments[0] as string) === '(auth)';
+    const inPaywall = segments.includes('paywall' as never);
 
     if (!isAuthenticated && !inAuthGroup) {
       // User is not signed in and trying to access protected route
@@ -40,8 +46,16 @@ function useProtectedRoute() {
       // User is signed in but still in auth group
       // Redirect to main app
       router.replace('/(tabs)');
+      
+      // Show paywall after login for non-subscribers (after a short delay to let navigation complete)
+      if (!isSubscribed && !hasShownPaywall) {
+        setHasShownPaywall(true);
+        setTimeout(() => {
+          router.push('/paywall');
+        }, 500);
+      }
     }
-  }, [isAuthenticated, isInitialized, segments]);
+  }, [isAuthenticated, isInitialized, segments, isSubscribed, hasShownPaywall]);
 }
 
 export default function RootLayout() {
@@ -62,6 +76,28 @@ export default function RootLayout() {
     return () => {
       unsubscribe();
     };
+  }, []);
+
+  // Initialize RevenueCat
+  useEffect(() => {
+    const initRevenueCat = async () => {
+      try {
+        await revenueCatService.initialize();
+
+        // Check current subscription status
+        const customerInfo = await revenueCatService.getCustomerInfo();
+        const isActive = customerInfo.entitlements.active['premium'] !== undefined;
+
+        if (isActive) {
+          const expiration = customerInfo.entitlements.active['premium']?.expirationDate;
+          useSubscriptionStore.getState().setSubscription('premium', expiration || null);
+        }
+      } catch (error) {
+        console.error('RevenueCat init error:', error);
+      }
+    };
+
+    initRevenueCat();
   }, []);
 
   // Handle app ready state
@@ -106,14 +142,20 @@ export default function RootLayout() {
       <Stack.Screen
         name="recipe"
         options={{
-          presentation: 'modal',
-          animation: 'slide_from_bottom',
+          title: "Cooking Mode",
         }}
       />
       <Stack.Screen
         name="serving-size"
         options={{
+          title: "Serving Size",
+        }}
+      />
+      <Stack.Screen
+        name="paywall"
+        options={{
           presentation: 'modal',
+          headerShown: false,
           animation: 'slide_from_bottom',
         }}
       />

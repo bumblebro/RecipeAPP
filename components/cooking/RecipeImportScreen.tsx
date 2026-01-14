@@ -210,7 +210,7 @@ export default function RecipeImportScreen({
                 <Text className="text-neutral-400 mt-4">
                   {importState === 'extracting'
                     ? 'Extracting recipe from URL...'
-                    : 'Processing recipe with AI...'}
+                    : 'Processing recipe magic...'}
                 </Text>
               </Animated.View>
             )}

@@ -8,7 +8,9 @@ import { Platform } from 'react-native';
 import { router } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import { useAuthStore } from '../stores/useAuthStore';
+import { useSubscriptionStore } from '../stores/useSubscriptionStore';
 import { AuthService } from '../features/auth/auth.service';
+import { authApi } from '../features/auth/auth.api';
 import { AuthResponse, AuthUser, AuthError } from '../types/auth';
 
 interface UseAuthReturn {
@@ -51,6 +53,18 @@ export function useAuth(): UseAuthReturn {
   const isAppleAuthAvailable = useMemo(() => Platform.OS === 'ios', []);
 
   /**
+   * Sync user with backend
+   */
+  const syncUser = useCallback(async () => {
+    try {
+      await authApi.syncUserProfile();
+    } catch (error) {
+      console.error('Failed to sync user profile:', error);
+      // We don't block the UI flow for sync errors, but we log them
+    }
+  }, []);
+
+  /**
    * Email/password login
    */
   const login = useCallback(
@@ -65,13 +79,14 @@ export function useAuth(): UseAuthReturn {
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       } else {
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        await syncUser(); // Sync with backend
         router.replace('/(tabs)' as any);
       }
 
       setLoading(false);
       return result;
     },
-    [setLoading, setError, clearError]
+    [setLoading, setError, clearError, syncUser]
   );
 
   /**
@@ -93,13 +108,14 @@ export function useAuth(): UseAuthReturn {
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       } else {
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        await syncUser(); // Sync with backend
         router.replace('/(tabs)' as any);
       }
 
       setLoading(false);
       return result;
     },
-    [setLoading, setError, clearError]
+    [setLoading, setError, clearError, syncUser]
   );
 
   /**
@@ -112,19 +128,19 @@ export function useAuth(): UseAuthReturn {
     const result = await AuthService.loginWithGoogle();
 
     if (result.error) {
-      // Don't show error for user cancellation
       if (result.error.code !== 'auth/google-signin-cancelled') {
         setError(result.error);
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       }
     } else {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      await syncUser(); // Sync with backend
       router.replace('/(tabs)' as any);
     }
 
     setLoading(false);
     return result;
-  }, [setLoading, setError, clearError]);
+  }, [setLoading, setError, clearError, syncUser]);
 
   /**
    * Apple Sign-In
@@ -136,19 +152,19 @@ export function useAuth(): UseAuthReturn {
     const result = await AuthService.loginWithApple();
 
     if (result.error) {
-      // Don't show error for user cancellation
       if (result.error.code !== 'auth/apple-signin-cancelled') {
         setError(result.error);
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       }
     } else {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      await syncUser(); // Sync with backend
       router.replace('/(tabs)' as any);
     }
 
     setLoading(false);
     return result;
-  }, [setLoading, setError, clearError]);
+  }, [setLoading, setError, clearError, syncUser]);
 
   /**
    * Logout
@@ -158,6 +174,7 @@ export function useAuth(): UseAuthReturn {
 
     await AuthService.logout();
     reset();
+    useSubscriptionStore.getState().clearSubscription();
 
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     router.replace('/(auth)/login' as any);

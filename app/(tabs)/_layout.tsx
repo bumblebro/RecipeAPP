@@ -8,6 +8,7 @@ import {
   Calendar,
   Users,
   User,
+  Heart,
 } from "lucide-react-native";
 
 export default function TabLayout() {
@@ -40,40 +41,22 @@ export default function TabLayout() {
       <Tabs.Screen
         name="index"
         options={{
+          title: "Home",
+          tabBarIcon: ({ color }) => <BookOpen size={24} color={color} />,
+        }}
+      />
+      <Tabs.Screen
+        name="cook"
+        options={{
           title: "Cook",
           tabBarIcon: ({ color }) => <ChefHat size={24} color={color} />,
         }}
       />
       <Tabs.Screen
-        name="cookbook"
+        name="saved"
         options={{
-          href: null,
-          title: "Cookbook",
-          tabBarIcon: ({ color }) => <BookOpen size={24} color={color} />,
-        }}
-      />
-      <Tabs.Screen
-        name="grocery"
-        options={{
-          href: null,
-          title: "Grocery",
-          tabBarIcon: ({ color }) => <ShoppingCart size={24} color={color} />,
-        }}
-      />
-      <Tabs.Screen
-        name="meals"
-        options={{
-          href: null,
-          title: "Meals",
-          tabBarIcon: ({ color }) => <Calendar size={24} color={color} />,
-        }}
-      />
-      <Tabs.Screen
-        name="discover"
-        options={{
-          href: null,
-          title: "Discover",
-          tabBarIcon: ({ color }) => <Users size={24} color={color} />,
+          title: "Saved",
+          tabBarIcon: ({ color }) => <Heart size={24} color={color} />,
         }}
       />
       <Tabs.Screen
@@ -81,6 +64,30 @@ export default function TabLayout() {
         options={{
           title: "Profile",
           tabBarIcon: ({ color }) => <User size={24} color={color} />,
+        }}
+      />
+      <Tabs.Screen
+        name="cookbook"
+        options={{
+          href: null,
+        }}
+      />
+      <Tabs.Screen
+        name="grocery"
+        options={{
+          href: null,
+        }}
+      />
+      <Tabs.Screen
+        name="meals"
+        options={{
+          href: null,
+        }}
+      />
+      <Tabs.Screen
+        name="discover"
+        options={{
+          href: null,
         }}
       />
     </Tabs>

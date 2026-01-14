@@ -1,203 +1,252 @@
-import React, { useState, useCallback, useMemo } from "react";
+import React, { useState, useCallback, useMemo, useEffect } from "react";
 import {
   View,
   Text,
   Pressable,
   ScrollView,
+  TextInput,
   Image,
   ActivityIndicator,
+  Alert,
 } from "react-native";
 import { useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import Animated, { FadeInUp } from "react-native-reanimated";
-// import { LinearGradient } from "expo-linear-gradient"; // Temporarily disabled due to native module linking issue
+import Animated, { FadeInUp, FadeIn } from "react-native-reanimated";
 import * as Haptics from "expo-haptics";
-import { Link2, Plus, Clock, ChefHat, Users, Play } from "lucide-react-native";
+import { 
+  Link2, 
+  ChefHat, 
+  Clock, 
+  Settings, 
+  Sparkles, 
+  Play,
+  ArrowRight,
+  Heart,
+  Users
+} from "lucide-react-native";
 import { useCookingStore } from "../../stores/useCookingStore";
-import RecipeImportScreen from "../../components/cooking/RecipeImportScreen";
+import { useExtractionStore } from '../../stores/useExtractionStore';
+import { recipeApi } from "../../features/recipe/recipe.api";
 import { cn } from "../../lib/cn";
+import { usePaywall } from "../../lib/usePaywall";
 
-type ViewState = "home" | "import" | "overview" | "cooking" | "completed";
+import { useShareIntent } from "expo-share-intent";
 
 interface Recipe {
   id: string;
   name: string;
   description?: string;
-  image?: string | string[];
+  image?: string;
   ingredients: string[];
   instructions: string[];
   processedInstructions?: any[];
   totalTime?: string;
-  cookTime?: string;
-  prepTime?: string;
   yield?: string | number;
   sourceUrl?: string;
 }
 
-// Sample recipe data
-const sampleRecipe: Recipe = {
-  id: "sample-1",
-  name: "Classic Chocolate Chip Cookies",
-  description:
-    "Soft and chewy chocolate chip cookies that are perfect for any occasion.",
-  image: "https://images.unsplash.com/photo-1499636136210-6f4ee915583e?w=800",
-  ingredients: [
-    "2 1/4 cups all-purpose flour",
-    "1 tsp baking soda",
-    "1 cup butter, softened",
-    "3/4 cup granulated sugar",
-    "3/4 cup brown sugar",
-    "2 large eggs",
-    "2 tsp vanilla extract",
-    "2 cups chocolate chips",
-  ],
-  instructions: [
-    "Preheat oven to 375°F (190°C).",
-    "Mix flour, baking soda, and salt in a bowl.",
-    "Cream butter and sugars until fluffy.",
-    "Beat in eggs and vanilla.",
-    "Gradually blend in flour mixture.",
-    "Stir in chocolate chips.",
-    "Drop rounded tablespoons onto ungreased baking sheets.",
-    "Bake 9-11 minutes until golden brown.",
-  ],
-  totalTime: "PT30M",
-  yield: 24,
-};
+type ViewState = "home" | "overview";
 
-const formatDuration = (duration: string): string => {
-  if (!duration) return "0 min";
-  const match = duration.match(/PT(?:(\d+)H)?(?:(\d+)M)?/);
-  if (!match) return duration;
-  const hours = match[1] ? parseInt(match[1]) : 0;
-  const minutes = match[2] ? parseInt(match[2]) : 0;
-  if (hours > 0 && minutes > 0) return `${hours}h ${minutes}m`;
-  if (hours > 0) return `${hours}h`;
-  if (minutes > 0) return `${minutes}m`;
-  return duration;
-};
-
-const extractDomain = (url: string): string => {
-  try {
-    const urlObj = new URL(url);
-    return urlObj.hostname.replace("www.", "");
-  } catch {
-    return url;
-  }
-};
+const processedUrls = new Set<string>();
 
 export default function Home() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { recipe: activeRecipe, hasActiveSession } = useCookingStore();
+  const { hasActiveSession, recipe: activeRecipe } = useCookingStore();
+  const { isSubscribed, showPaywall, checkAndUseRecipeExtraction, checkAndUseCookingSession, checkCanSaveRecipe } = usePaywall();
+  const { hasShareIntent, shareIntent, resetShareIntent } = useShareIntent();
 
   const [viewState, setViewState] = useState<ViewState>("home");
-  const [currentRecipe, setCurrentRecipe] = useState<Recipe | null>(null);
-  const [isImporting, setIsImporting] = useState(false);
+  const [selectedRecipe, setSelectedRecipe] = useState<Recipe | null>(null);
+  const [url, setUrl] = useState("");
+  const { isExtracting, setIsExtracting } = useExtractionStore();
+  const [recentRecipes, setRecentRecipes] = useState<Recipe[]>([]);
+  const [isSaving, setIsSaving] = useState(false);
+  const [isSaved, setIsSaved] = useState(false);
 
-  // Check if there's an active recipe
-  const hasActive = useMemo(() => hasActiveSession(), [hasActiveSession]);
+  /* Fix: Argument can be an event (from onPress) or a string (from Share Intent) */
+  const handleExtract = useCallback(async (arg?: string | any) => {
+    const targetUrl = (typeof arg === 'string') ? arg : url;
+    
+    if (!targetUrl.trim()) {
+      Alert.alert("Error", "Please paste a recipe link first.");
+      return;
+    }
 
-  const handleImportPress = useCallback(() => {
+    // Check usage limits for free users (client-side)
+    if (!isSubscribed && !checkAndUseRecipeExtraction()) {
+      return; // Paywall already shown by checkAndUseRecipeExtraction
+    }
+
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    setViewState("import");
-  }, []);
+    setIsExtracting(true);
+    // Determine which URL to use for API call
+    const apiCallUrl = targetUrl.trim();
 
-  const handleImport = useCallback(async (url: string) => {
-    setIsImporting(true);
     try {
-      // Extract recipe
-      const extractResponse = await fetch(
-        "http://localhost:4000/api/extract-recipe",
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ url }),
-        }
-      );
+      const response = await recipeApi.extractRecipe(apiCallUrl);
+      const extractedData = response.data;
 
-      if (!extractResponse.ok) {
-        throw new Error("Failed to extract recipe from URL.");
-      }
-
-      const extractedData = await extractResponse.json();
       const recipe: Recipe = {
-        ...extractedData,
-        sourceUrl: url,
+        id: `imported-${Date.now()}`,
+        name: extractedData.name,
+        description: extractedData.description,
+        image: extractedData.image,
+        ingredients: extractedData.ingredients,
+        instructions: extractedData.instructions,
+        totalTime: extractedData.totalTime,
+        yield: extractedData.yield,
+        sourceUrl: apiCallUrl,
+        processedInstructions: (extractedData as any).processedInstructions
       };
-      setCurrentRecipe(recipe);
+
+      // Add to recent recipes
+      setRecentRecipes(prev => [recipe, ...prev].slice(0, 5));
+      setUrl("");
+
+      // Show Overview instead of immediate navigation
+      setSelectedRecipe(recipe);
       setViewState("overview");
+
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } catch (e: any) {
-      throw new Error(e.message || "An unexpected error occurred.");
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+      
+      // Handle the 'Require upgrade' error 403 specially
+      if (e.response?.status === 403 && e.response?.data?.requiresUpgrade) {
+        showPaywall();
+        return;
+      }
+
+      Alert.alert(
+        "Extraction Failed",
+        e.response?.data?.error || "Could not extract recipe. Please try again or check the URL."
+      );
     } finally {
-      setIsImporting(false);
+      setIsExtracting(false);
     }
-  }, []);
+  }, [url, isSubscribed, checkAndUseRecipeExtraction, showPaywall]);
 
-  const handleSampleRecipe = useCallback(() => {
+
+  const intentLock = React.useRef(false);
+
+  /* Handle Share Intent (Incoming URL from other apps) */
+  useEffect(() => {
+    if (hasShareIntent && !intentLock.current) {
+      console.log("DEBUG: Received Share Intent:", JSON.stringify(shareIntent, null, 2));
+      
+      const anyIntent = shareIntent as any;
+      const candidateUrl = anyIntent.value || anyIntent.webUrl || (anyIntent.files?.[0]?.webUrl);
+
+      if (candidateUrl && (typeof candidateUrl === 'string') && (candidateUrl.startsWith('http') || candidateUrl.startsWith('www'))) {
+        
+        // GLOBAL LOCK: Check if this URL was recently processed
+        if (processedUrls.has(candidateUrl)) {
+             console.log("DEBUG: Duplicate share ignored:", candidateUrl);
+             resetShareIntent();
+             return;
+        }
+
+        // Lock locally and globally
+        intentLock.current = true;
+        processedUrls.add(candidateUrl);
+        
+        console.log("DEBUG: Extracted URL:", candidateUrl);
+        setUrl(candidateUrl);
+        
+        // Force loading state immediately
+        setIsExtracting(true);
+        
+        // Auto-trigger extraction
+        // Clear global lock ONLY after extraction finishes (success or fail)
+        handleExtract(candidateUrl)
+          .catch(err => console.log("Share extraction error", err))
+          .finally(() => {
+             console.log("DEBUG: Releasing lock for", candidateUrl);
+             processedUrls.delete(candidateUrl);
+          });
+        
+        // Reset local lock quickly (debounce rapid fires)
+        setTimeout(() => {
+          intentLock.current = false;
+        }, 1000);
+      } else {
+         console.log("DEBUG: No valid URL found in share intent");
+      }
+      
+      resetShareIntent();
+    }
+  }, [hasShareIntent, shareIntent, resetShareIntent, handleExtract]);
+
+  const handleStartCooking = useCallback(async () => {
+    if (!selectedRecipe) return;
+
+    // Check usage limits for free users (client-side)
+    if (!isSubscribed && !checkAndUseCookingSession()) {
+      return; // Paywall already shown by checkAndUseCookingSession
+    }
+
+    try {
+      // Track session in backend (limit 3/day)
+      await recipeApi.trackCookSession();
+
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+      router.push({
+        pathname: "/serving-size",
+        params: { recipe: JSON.stringify(selectedRecipe) },
+      });
+    } catch (error: any) {
+      if (error.status === 403) {
+        Alert.alert(
+          "Limit Reached",
+          error.message || "You've reached your daily cooking limit.",
+          [
+            { text: 'Maybe Later', style: 'cancel' },
+            { text: 'Upgrade to Premium', onPress: showPaywall },
+          ]
+        );
+      } else {
+        console.error("Failed to track cooking session:", error);
+        Alert.alert("Error", "Could not start cooking session. Please try again.");
+      }
+    }
+  }, [selectedRecipe, router, isSubscribed, checkAndUseCookingSession, showPaywall]);
+
+  const handleSaveRecipe = useCallback(async () => {
+    if (!selectedRecipe || isSaving || isSaved) return;
+
+    // Check saved recipes limit for free users (client-side)
+    if (!isSubscribed && !checkCanSaveRecipe()) {
+      return; // Paywall already shown by checkCanSaveRecipe
+    }
+
+    setIsSaving(true);
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    setCurrentRecipe(sampleRecipe);
-    setViewState("overview");
-  }, []);
 
-  const handleResumeCooking = useCallback(() => {
-    if (!activeRecipe) return;
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    // Navigate to recipe screen with active recipe
-    router.push({
-      pathname: "/recipe",
-      params: {
-        recipe: JSON.stringify({
-          name: activeRecipe.title,
-          processedInstructions: activeRecipe.steps.map((step) => ({
-            action: step.text,
-            duration: step.time,
-            durationUnit: "minutes" as const,
-          })),
-        }),
-      },
-    });
-  }, [activeRecipe, router]);
+    try {
+      await recipeApi.saveRecipe(selectedRecipe.name, selectedRecipe);
+      setIsSaved(true);
+      Alert.alert("Saved!", "Recipe added to your cookbook.");
+    } catch (error: any) {
+      if (error.status === 403) {
+        Alert.alert(
+          "Limit Reached",
+          error.message || "You've reached your saved recipes limit.",
+          [
+            { text: 'Maybe Later', style: 'cancel' },
+            { text: 'Upgrade to Premium', onPress: showPaywall },
+          ]
+        );
+      } else {
+        Alert.alert("Error", "Failed to save recipe. Please try again.");
+      }
+    } finally {
+      setIsSaving(false);
+    }
+  }, [selectedRecipe, isSaving, isSaved, isSubscribed, checkCanSaveRecipe, showPaywall]);
 
-  const handleStartCooking = useCallback(() => {
-    if (!currentRecipe) return;
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    router.push({
-      pathname: "/serving-size",
-      params: { recipe: JSON.stringify(currentRecipe) },
-    });
-  }, [currentRecipe, router]);
-
-  // Import Screen
-  if (viewState === "import") {
-    return (
-      <RecipeImportScreen
-        onClose={() => {
-          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-          setViewState("home");
-        }}
-        onImport={handleImport}
-      />
-    );
-  }
-
-  // Overview Screen
-  if (viewState === "overview" && currentRecipe) {
-    const displayRecipe = currentRecipe;
-    const totalTime = formatDuration(displayRecipe.totalTime || "PT0M");
-    const servings =
-      typeof displayRecipe.yield === "number"
-        ? displayRecipe.yield
-        : typeof displayRecipe.yield === "string"
-        ? parseInt(displayRecipe.yield) || 4
-        : 4;
-    const steps =
-      displayRecipe.processedInstructions || displayRecipe.instructions || [];
-    const imageUrl = Array.isArray(displayRecipe.image)
-      ? displayRecipe.image[0]
-      : displayRecipe.image;
-
+  // Overview UI
+  if (viewState === "overview" && selectedRecipe) {
     return (
       <View className="flex-1 bg-neutral-950">
         <ScrollView
@@ -207,230 +256,110 @@ export default function Home() {
           }}
           showsVerticalScrollIndicator={false}
         >
-          {/* Hero Image Section */}
-          <View className="h-80 relative">
-            {imageUrl ? (
-              <Image
-                source={{ uri: imageUrl }}
-                className="w-full h-full"
-                resizeMode="cover"
-              />
-            ) : (
-              <View className="w-full h-full bg-neutral-900 items-center justify-center">
-                <ChefHat size={64} color="#4b5563" />
+          {/* Back Button */}
+          <Pressable
+            onPress={() => {
+              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+              setViewState("home");
+            }}
+            style={{ marginTop: insets.top + 10 }}
+            className="flex-row items-center px-5 py-2 mb-4"
+          >
+            <Text className="text-amber-500 text-lg font-semibold">← Back to Home</Text>
+          </Pressable>
+
+          <View className="px-5">
+            {selectedRecipe.image && (
+              <View className="relative w-full h-56 mb-6">
+                <Image
+                  source={{ uri: typeof selectedRecipe.image === 'string' ? selectedRecipe.image : selectedRecipe.image[0] }}
+                  className="w-full h-full rounded-3xl"
+                  resizeMode="cover"
+                />
+                <Pressable
+                  onPress={handleSaveRecipe}
+                  disabled={isSaving}
+                  className="absolute top-4 right-4 w-12 h-12 rounded-full bg-black/40 items-center justify-center border border-white/20"
+                >
+                  <Heart 
+                    size={24} 
+                    color={isSaved ? "#f59e0b" : "#ffffff"} 
+                    fill={isSaved ? "#f59e0b" : "transparent"} 
+                  />
+                </Pressable>
               </View>
             )}
-            {/* Gradient Overlay - Using View with opacity for gradient effect */}
-            <View
-              style={{
-                position: "absolute",
-                left: 0,
-                right: 0,
-                bottom: 0,
-                height: 160,
-                backgroundColor: "#0a0a0a",
-              }}
-            />
-            {/* Back Button */}
-            <Pressable
-              onPress={() => {
-                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                setViewState("home");
-              }}
-              style={{
-                position: "absolute",
-                top: insets.top + 8,
-                left: 16,
-              }}
-              className="w-10 h-10 rounded-full bg-black/50 items-center justify-center active:opacity-70"
-            >
-              <Text className="text-white text-xl">←</Text>
-            </Pressable>
-          </View>
 
-          {/* Content Area */}
-          <View className="px-5 -mt-16">
-            {/* Title */}
-            <Animated.Text
-              entering={FadeInUp.delay(100).duration(400)}
-              className="text-3xl font-bold text-white mb-3"
-            >
-              {displayRecipe.name}
-            </Animated.Text>
+            <Text className="text-3xl font-bold text-white mb-3">
+              {selectedRecipe.name}
+            </Text>
 
-            {/* Meta Information */}
-            <Animated.View
-              entering={FadeInUp.delay(200).duration(400)}
-              className="flex-row items-center gap-4 mb-6"
-            >
-              <View className="flex-row items-center">
+            <View className="flex-row items-center gap-4 mb-6">
+              <View className="flex-row items-center bg-neutral-900 px-3 py-1.5 rounded-full">
                 <Clock size={16} color="#9ca3af" />
-                <Text className="ml-1.5 text-neutral-400">{totalTime}</Text>
-              </View>
-              <View className="flex-row items-center">
-                <Users size={16} color="#9ca3af" />
-                <Text className="ml-1.5 text-neutral-400">
-                  {servings} servings
+                <Text className="ml-1.5 text-neutral-400 text-sm">
+                  {selectedRecipe.totalTime || "30 min"}
                 </Text>
               </View>
-              <View className="flex-row items-center">
+              <View className="flex-row items-center bg-neutral-900 px-3 py-1.5 rounded-full">
                 <ChefHat size={16} color="#9ca3af" />
-                <Text className="ml-1.5 text-neutral-400">
-                  {steps.length} steps
+                <Text className="ml-1.5 text-neutral-400 text-sm">
+                  {selectedRecipe.instructions.length} steps
                 </Text>
               </View>
-            </Animated.View>
-
-            {/* Source URL */}
-            {displayRecipe.sourceUrl && (
-              <Animated.View
-                entering={FadeInUp.delay(250).duration(400)}
-                className="flex-row items-center mb-4"
-              >
-                <Link2 size={14} color="#6b7280" />
-                <Text
-                  className="ml-1.5 text-neutral-500 text-sm"
-                  numberOfLines={1}
-                >
-                  {extractDomain(displayRecipe.sourceUrl)}
+              <View className="flex-row items-center bg-neutral-900 px-3 py-1.5 rounded-full">
+                <Users size={16} color="#9ca3af" />
+                <Text className="ml-1.5 text-neutral-400 text-sm">
+                  {selectedRecipe.yield || "4 servings"}
                 </Text>
-              </Animated.View>
-            )}
+              </View>
+            </View>
 
-            {/* Description */}
-            {displayRecipe.description && (
-              <Animated.Text
-                entering={FadeInUp.delay(300).duration(400)}
-                className="text-neutral-400 text-base leading-relaxed mb-8"
-              >
-                {displayRecipe.description}
-              </Animated.Text>
-            )}
-
-            {/* Resume Banner */}
-            {hasActive &&
-              activeRecipe &&
-              activeRecipe.title === displayRecipe.name && (
-                <Animated.View
-                  entering={FadeInUp.delay(350).duration(400)}
-                  className="bg-amber-500/10 border border-amber-500/30 rounded-2xl p-4 mb-6"
-                >
-                  <Text className="text-amber-400 font-semibold mb-1">
-                    Resume Cooking
-                  </Text>
-                  <Text className="text-white font-medium mb-1">
-                    {activeRecipe.title}
-                  </Text>
-                  <Text className="text-neutral-400 text-sm mb-3">
-                    You have an active cooking session. Pick up where you left
-                    off!
-                  </Text>
-                  <Pressable
-                    onPress={handleResumeCooking}
-                    className="w-full bg-amber-500 rounded-xl py-3 items-center justify-center active:opacity-80"
-                  >
-                    <Text className="text-black font-bold">
-                      Continue Cooking
-                    </Text>
-                  </Pressable>
-                </Animated.View>
-              )}
-
-            {/* Ingredients Section */}
-            <Animated.View
-              entering={FadeInUp.delay(400).duration(400)}
-              className="mb-6"
-            >
-              <Text className="text-lg font-semibold text-white mb-3">
-                Ingredients ({displayRecipe.ingredients.length})
+            {selectedRecipe.description && (
+              <Text className="text-neutral-400 text-base leading-relaxed mb-8 px-1">
+                {selectedRecipe.description}
               </Text>
-              <View className="bg-neutral-900 rounded-2xl p-4">
-                {displayRecipe.ingredients.map((ingredient, index) => (
-                  <View
-                    key={index}
-                    className={cn(
-                      "flex-row items-center justify-between py-2.5",
-                      index < displayRecipe.ingredients.length - 1 &&
-                        "border-b border-neutral-800"
-                    )}
-                  >
-                    <Text className="text-white flex-1">{ingredient}</Text>
+            )}
+
+            {/* Ingredients */}
+            <View className="mb-8">
+              <Text className="text-xl font-bold text-white mb-4 px-1">Ingredients</Text>
+              <View className="bg-neutral-900 rounded-3xl p-5 border border-neutral-800">
+                {selectedRecipe.ingredients.map((ing, i) => (
+                  <View key={i} className={cn("py-2.5 flex-row items-center", i < selectedRecipe.ingredients.length - 1 && "border-b border-neutral-800")}>
+                    <View className="w-1.5 h-1.5 rounded-full bg-amber-500 mr-3" />
+                    <Text className="text-white flex-1">{ing}</Text>
                   </View>
                 ))}
               </View>
-            </Animated.View>
+            </View>
 
-            {/* Steps Section */}
-            <Animated.View entering={FadeInUp.delay(500).duration(400)}>
-              <Text className="text-lg font-semibold text-white mb-3">
-                Steps ({steps.length})
-              </Text>
+            {/* Steps Preview */}
+            <View className="mb-8">
+              <Text className="text-xl font-bold text-white mb-4 px-1">Instructions</Text>
               <View className="gap-3">
-                {steps.map((step: any, index: number) => {
-                  const stepText =
-                    typeof step === "string" ? step : step.action || step.text;
-                  const stepTime =
-                    typeof step === "object" && step.duration
-                      ? step.duration
-                      : typeof step === "object" && step.time
-                      ? step.time
-                      : 0;
-
-                  return (
-                    <View
-                      key={index}
-                      className="flex-row items-start bg-neutral-900 rounded-xl p-4"
-                    >
-                      <View className="w-7 h-7 rounded-full bg-neutral-800 items-center justify-center mr-3">
-                        <Text className="text-neutral-400 text-sm font-semibold">
-                          {index + 1}
-                        </Text>
-                      </View>
-                      <View className="flex-1">
-                        <Text className="text-white text-sm leading-relaxed">
-                          {stepText}
-                        </Text>
-                        {stepTime > 0 && (
-                          <View className="flex-row items-center mt-2">
-                            <Clock size={12} color="#f59e0b" />
-                            <Text className="ml-1 text-amber-500 text-xs">
-                              {stepTime} min
-                            </Text>
-                          </View>
-                        )}
-                      </View>
-                    </View>
-                  );
-                })}
+                {selectedRecipe.instructions.map((step, i) => (
+                  <View key={i} className="bg-neutral-900 rounded-2xl p-4 flex-row border border-neutral-800">
+                    <Text className="text-amber-500 font-bold mr-3 w-4">{i + 1}.</Text>
+                    <Text className="text-neutral-300 flex-1 leading-tight">{step}</Text>
+                  </View>
+                ))}
               </View>
-            </Animated.View>
+            </View>
           </View>
         </ScrollView>
 
-        {/* Floating CTA Button */}
+        {/* Floating Start Cooking Button */}
         <View
-          className="absolute bottom-0 left-0 right-0 px-5 pt-4"
-          style={{
-            paddingBottom: insets.bottom + 16,
-            backgroundColor: "transparent",
-          }}
+          className="absolute bottom-0 left-0 right-0 px-5 pt-4 bg-neutral-950/90"
+          style={{ paddingBottom: insets.bottom + 16 }}
         >
-          <View
-            style={{
-              position: "absolute",
-              bottom: 0,
-              left: 0,
-              right: 0,
-              height: 100,
-              backgroundColor: "#0a0a0a",
-            }}
-          />
           <Pressable
             onPress={handleStartCooking}
-            className="w-full h-14 rounded-2xl bg-amber-500 items-center justify-center flex-row active:opacity-80"
+            className="w-full h-16 rounded-2xl bg-amber-500 items-center justify-center flex-row shadow-2xl"
           >
-            <Play size={22} color="#000000" />
-            <Text className="ml-2 text-black font-bold text-lg">
+            <Play size={24} color="#000000" fill="#000000" />
+            <Text className="ml-3 text-black font-extrabold text-xl uppercase tracking-tight">
               Start Cooking Mode
             </Text>
           </Pressable>
@@ -439,140 +368,174 @@ export default function Home() {
     );
   }
 
-  // Home Screen
   return (
     <View className="flex-1 bg-neutral-950">
       <View
-        style={{
-          flex: 1,
-          paddingTop: insets.top,
-          paddingBottom: insets.bottom,
-          backgroundColor: "#0a0a0a",
-        }}
+        className="flex-1"
+        style={{ paddingTop: insets.top }}
       >
-        <ScrollView
-          className="flex-1 px-5"
-          contentContainerStyle={{ flexGrow: 1, paddingBottom: 20 }}
-          showsVerticalScrollIndicator={false}
-        >
-          {/* 1. Header */}
-          <Animated.View
-            entering={FadeInUp.duration(400)}
-            className="pt-8 pb-6"
+        {/* Header */}
+        <View className="px-5 py-4 flex-row items-center justify-between">
+          <View className="flex-row items-center">
+            <View className="w-8 h-8 bg-amber-500 rounded-lg items-center justify-center mr-2">
+              <ChefHat size={20} color="#000000" />
+            </View>
+            <Text className="text-xl font-bold text-white">RecipeGenie</Text>
+          </View>
+          <Pressable 
+            onPress={() => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)}
+            className="w-10 h-10 rounded-full bg-neutral-900 items-center justify-center"
           >
-            <Text className="text-3xl font-bold text-white mb-2">
-              Smart Cooking
+            <Settings size={20} color="#9ca3af" />
+          </Pressable>
+        </View>
+
+        <ScrollView 
+          className="flex-1 px-5"
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={{ paddingBottom: 40 }}
+        >
+          {/* Main Input Card */}
+          <Animated.View 
+            entering={FadeInUp.delay(100).duration(500)}
+            className="bg-neutral-900 rounded-3xl p-6 mb-6 shadow-xl border border-neutral-800"
+          >
+            <Text className="text-xl font-bold text-white mb-2">
+              Paste a recipe link
             </Text>
-            <Text className="text-neutral-400">
-              Step-by-step guided cooking experience
+            <Text className="text-neutral-400 mb-6 font-medium">
+              We'll extract ingredients & steps automatically.
             </Text>
+
+            <View className="bg-neutral-800 rounded-2xl px-4 py-2 border border-neutral-700 mb-4 flex-row items-center">
+              <Link2 size={20} color="#6b7280" className="mr-2" />
+              <TextInput
+                value={url}
+                onChangeText={setUrl}
+                placeholder="Blog, YouTube, or News link..."
+                placeholderTextColor="#4b5563"
+                className="flex-1 text-white h-12 text-base"
+                autoCapitalize="none"
+                autoCorrect={false}
+              />
+            </View>
+
+            <Pressable
+              onPress={handleExtract}
+              disabled={isExtracting}
+              className={cn(
+                "h-14 rounded-2xl items-center justify-center flex-row",
+                isExtracting ? "bg-neutral-800" : "bg-amber-500"
+              )}
+            >
+              {isExtracting ? (
+                <ActivityIndicator color="#ffffff" />
+              ) : (
+                <>
+                  <Sparkles size={20} color="#000000" />
+                  <Text className="ml-2 text-black font-bold text-lg">
+                    Extract Recipe
+                  </Text>
+                </>
+              )}
+            </Pressable>
           </Animated.View>
 
-          {/* 2. Resume Banner */}
-          {hasActive && activeRecipe && (
-            <Animated.View
-              entering={FadeInUp.delay(100).duration(400)}
-              className="bg-amber-500/10 border border-amber-500/30 rounded-2xl p-4 mb-6"
-            >
-              <Text className="text-amber-400 font-semibold mb-1">
-                Resume Cooking
+          {/* Smart Feature Info Card */}
+          <Animated.View 
+            entering={FadeInUp.delay(200).duration(500)}
+            className="bg-amber-500/10 border border-amber-500/20 rounded-2xl p-4 mb-8 flex-row items-center"
+          >
+            <View className="w-10 h-10 rounded-full bg-amber-500/20 items-center justify-center mr-4">
+              <Sparkles size={20} color="#f59e0b" />
+            </View>
+            <View className="flex-1">
+              <Text className="text-white font-semibold mb-0.5">
+                Smart Extract
               </Text>
-              <Text className="text-white font-medium mb-1">
-                {activeRecipe.title}
+              <Text className="text-neutral-400 text-sm leading-tight">
+                Instantly converts any food blog into guided cooking steps.
               </Text>
-              <Text className="text-neutral-400 text-sm mb-3">
-                You have an active cooking session. Pick up where you left off!
+            </View>
+          </Animated.View>
+
+          {/* Recent Recipes */}
+          {recentRecipes.length > 0 && (
+            <Animated.View entering={FadeIn.delay(300)}>
+              <Text className="text-lg font-bold text-white mb-4 px-1">
+                Recent Recipes
               </Text>
-              <Pressable
-                onPress={handleResumeCooking}
-                className="w-full bg-amber-500 rounded-xl py-3 items-center justify-center active:opacity-80"
-              >
-                <Text className="text-black font-bold">Continue Cooking</Text>
-              </Pressable>
+              <View className="gap-3">
+                {recentRecipes.map((recipe, index) => (
+                  <Pressable
+                    key={recipe.id}
+                    onPress={() => {
+                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                      setSelectedRecipe(recipe);
+                      setViewState("overview");
+                    }}
+                    className="bg-neutral-900 rounded-2xl p-3 flex-row items-center border border-neutral-800"
+                  >
+                    <View className="w-16 h-16 rounded-xl bg-neutral-800 overflow-hidden mr-3">
+                      {recipe.image ? (
+                        <Image 
+                          source={{ uri: recipe.image }} 
+                          className="w-full h-full"
+                          resizeMode="cover"
+                        />
+                      ) : (
+                        <ChefHat size={24} color="#4b5563" style={{ alignSelf: 'center', marginTop: 16 }} />
+                      )}
+                    </View>
+                    <View className="flex-1">
+                      <Text className="text-white font-semibold text-base mb-1" numberOfLines={1}>
+                        {recipe.name}
+                      </Text>
+                      <View className="flex-row items-center">
+                        <Clock size={12} color="#9ca3af" />
+                        <Text className="ml-1 text-neutral-500 text-xs">
+                          {recipe.instructions.length} steps
+                        </Text>
+                      </View>
+                    </View>
+                    <ArrowRight size={18} color="#4b5563" className="ml-2" />
+                  </Pressable>
+                ))}
+              </View>
             </Animated.View>
           )}
 
-          {/* 3. Import Card */}
-          <Animated.View entering={FadeInUp.delay(200).duration(400)}>
-            <Pressable
-              onPress={handleImportPress}
-              className="bg-neutral-900 border border-neutral-800 rounded-2xl p-6 mb-4 active:opacity-80"
-            >
-              <View className="flex-row items-center mb-4">
-                <View className="w-14 h-14 rounded-full bg-amber-500/20 items-center justify-center">
-                  <Link2 size={28} color="#f59e0b" />
-                </View>
-                <View className="ml-4 flex-1">
-                  <Text className="text-white text-lg font-semibold mb-1">
-                    Import from URL
-                  </Text>
-                  <Text className="text-neutral-400 text-sm">
-                    Paste a link from any recipe website
-                  </Text>
-                </View>
-                <Plus size={24} color="#6b7280" />
-              </View>
-              <Text className="text-neutral-500 text-xs">
-                Supports most popular recipe websites
+          {/* Empty State Recent */}
+          {recentRecipes.length === 0 && (
+            <View className="py-10 items-center justify-center opacity-30">
+              <ChefHat size={40} color="#4b5563" />
+              <Text className="text-neutral-500 mt-4 text-center">
+                Your extracted recipes will appear here.
               </Text>
-            </Pressable>
-          </Animated.View>
-
-          {/* 4. Divider */}
-          <Animated.View
-            entering={FadeInUp.delay(300).duration(400)}
-            className="flex-row items-center my-6"
-          >
-            <View className="flex-1 h-px bg-neutral-800" />
-            <Text className="mx-4 text-neutral-500 text-sm">
-              or try a sample
-            </Text>
-            <View className="flex-1 h-px bg-neutral-800" />
-          </Animated.View>
-
-          {/* 5. Sample Recipe Card */}
-          <Animated.View entering={FadeInUp.delay(400).duration(400)}>
-            <Pressable
-              onPress={handleSampleRecipe}
-              className="bg-neutral-900 rounded-2xl overflow-hidden active:opacity-80"
-            >
-              {sampleRecipe.image &&
-                (Array.isArray(sampleRecipe.image) ? (
-                  <Image
-                    source={{ uri: sampleRecipe.image[0] }}
-                    className="w-full h-40"
-                    resizeMode="cover"
-                  />
-                ) : (
-                  <Image
-                    source={{ uri: sampleRecipe.image }}
-                    className="w-full h-40"
-                    resizeMode="cover"
-                  />
-                ))}
-              <View className="p-4">
-                <Text className="text-white text-lg font-semibold mb-2">
-                  {sampleRecipe.name}
-                </Text>
-                <View className="flex-row items-center gap-4">
-                  <View className="flex-row items-center">
-                    <Clock size={14} color="#9ca3af" />
-                    <Text className="ml-1.5 text-neutral-400 text-sm">
-                      {formatDuration(sampleRecipe.totalTime || "PT0M")}
-                    </Text>
-                  </View>
-                  <View className="flex-row items-center">
-                    <ChefHat size={14} color="#9ca3af" />
-                    <Text className="ml-1.5 text-neutral-400 text-sm">
-                      {sampleRecipe.instructions.length} steps
-                    </Text>
-                  </View>
-                </View>
-              </View>
-            </Pressable>
-          </Animated.View>
+            </View>
+          )}
         </ScrollView>
       </View>
+
+      {/* Fullscreen Loading Overlay */}
+      {isExtracting && (
+        <View style={{
+          position: 'absolute',
+          top: 0, 
+          left: 0, 
+          right: 0, 
+          bottom: 0,
+          backgroundColor: 'rgba(0,0,0,0.8)',
+          zIndex: 9999,
+          justifyContent: 'center',
+          alignItems: 'center'
+        }}>
+          <ActivityIndicator size="large" color="#f59e0b" />
+          <Text className="text-white font-bold mt-6 text-xl">Extracting Recipe...</Text>
+          <Text className="text-neutral-400 text-base mt-2">Analyzing content with AI</Text>
+        </View>
+      )}
     </View>
   );
 }
+
