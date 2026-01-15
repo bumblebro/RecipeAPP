@@ -29,11 +29,13 @@ import {
 import { useRouter } from "expo-router";
 // @ts-ignore - expo-keep-awake may not be installed yet
 import { activateKeepAwake, deactivateKeepAwake } from "expo-keep-awake";
-import * as Speech from "expo-speech";
 import { Ionicons } from "@expo/vector-icons";
 import * as Progress from "react-native-progress";
 import { useCookingStore } from "../stores/useCookingStore";
 import { mapRecipeDataToRecipe } from "../utils/recipeMapper";
+import { synthesizeSpeech } from "../utils/googleTTS";
+import Voice from '@react-native-voice/voice';
+import { Volume2, VolumeX } from "lucide-react-native";
 import Animated, {
   useAnimatedStyle,
   useSharedValue,
@@ -70,17 +72,11 @@ import {
   Lightbulb,
   Wrench,
   Coffee,
+  Mic,
+  MicOff,
 } from "lucide-react-native";
 
-// Voice recognition - conditional import for native
-let VoiceModule: any = null;
-if (Platform.OS !== "web") {
-  try {
-    VoiceModule = require("@react-native-voice/voice").default;
-  } catch (e) {
-    // Library not installed - will show helpful message
-  }
-}
+
 
 const { width: SCREEN_WIDTH } = Dimensions.get("window");
 
@@ -184,6 +180,7 @@ interface ProcessedInstruction {
   temperatureUnit?: "C" | "F";
   animationType?: string;
   notes?: string;
+  canDoNextStepInParallel?: boolean;
 }
 
 interface RecipeData {
@@ -380,6 +377,7 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
     removeTimer,
     completeRecipe,
     resetSession,
+    isCompleted,
     hasActiveSession: hasStoreActiveSession,
     completedSteps: storedCompletedSteps,
     setStepCompleted,
@@ -389,7 +387,7 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
 
   const [recipeData, setRecipeData] = useState<RecipeData | null>(null);
   const [isLoading, setIsLoading] = useState(true);
-  const [keepAwakeActive, setKeepAwakeActive] = useState(true); // Auto-enable on start
+
   const [error, setError] = useState<string | null>(null);
   const initializedRecipeRef = useRef<string | null>(null);
 
@@ -411,22 +409,28 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
   const [glossaryTerm, setGlossaryTerm] = useState<string | null>(null);
   const [showExitConfirm, setShowExitConfirm] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
-  const [showIngredientsModal, setShowIngredientsModal] = useState(false);
+  const [showIngredientsModal, setShowIngredientsModal] = useState(false);  // UI State
   const [showTimersModal, setShowTimersModal] = useState(false);
   const [showCompletionScreen, setShowCompletionScreen] = useState(false);
-  const [selectedVoice, setSelectedVoice] = useState<string | undefined>(
-    undefined
-  );
+  
+  // Voice State
   const [isListening, setIsListening] = useState(false);
-  const recognitionRef = useRef<any>(null);
-  const lastTapRef = useRef<number>(0);
-  const isProcessingCommandRef = useRef<boolean>(false);
-  const lastCommandTimeRef = useRef<number>(0);
-  const shouldAutoRestartRef = useRef<boolean>(false);
-  const isStoppingRef = useRef<boolean>(false);
-  const isStartingRef = useRef<boolean>(false);
+  const [partialTranscript, setPartialTranscript] = useState("");
+  const [isVoiceEnabled, setIsVoiceEnabled] = useState(true); // Default to on for this premium feature
+
+
+  // UI State
+  const [keepAwakeActive, setKeepAwakeActive] = useState(false);
+
+  // TTS State
+  const [isTTSEnabled, setIsTTSEnabled] = useState(true);
+  const [isPlaying, setIsPlaying] = useState(false);
   const soundRef = useRef<Audio.Sound | null>(null);
   const playedTimerAlerts = useRef<Set<string>>(new Set());
+  const spokenStepsRef = useRef<Set<number>>(new Set());
+  const lastCommandRef = useRef<number>(0);
+  const isVoiceStartingRef = useRef<boolean>(false);
+  const handleVoiceCommandRef = useRef<((t: string) => void) | null>(null);
 
   const playCompletionSound = useCallback(async () => {
     try {
@@ -471,12 +475,9 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
   );
 
   // Background Timers (Running on other steps)
-  const activeBackgroundTimers = useMemo(() => {
-    const currentStepId = `step-${currentStepIndex}`;
-    return timers.filter(
-      (t) => t.isRunning && !t.isComplete && t.stepId !== currentStepId
-    );
-  }, [timers, currentStepIndex]);
+  const activeTimers = useMemo(() => {
+    return timers.filter((t) => t.isRunning && !t.isComplete);
+  }, [timers]);
 
   const getDurationInSeconds = (
     step: ProcessedInstruction
@@ -894,90 +895,7 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
   }, [isLoading, loadingMessages]);
 
   // Get available voices and select a natural-sounding female voice
-  useEffect(() => {
-    const getNaturalVoice = async () => {
-      try {
-        const voices = await Speech.getAvailableVoicesAsync();
-        if (voices && voices.length > 0) {
-          // Common female voice names across platforms
-          const femaleVoiceNames = [
-            "samantha",
-            "karen",
-            "susan",
-            "victoria",
-            "zira",
-            "hazel",
-            "sarah",
-            "emily",
-            "linda",
-            "lisa",
-            "kate",
-            "anna",
-            "samantha-enhanced",
-            "karen-enhanced",
-            "susan-enhanced",
-          ];
 
-          // First, try to find enhanced/premium female voices
-          let preferredVoice = voices.find(
-            (v) =>
-              (v.name?.toLowerCase().includes("enhanced") ||
-                v.name?.toLowerCase().includes("premium")) &&
-              femaleVoiceNames.some((name) =>
-                v.name?.toLowerCase().includes(name)
-              )
-          );
-
-          // If no enhanced female voice, look for any female voice
-          if (!preferredVoice) {
-            preferredVoice = voices.find((v) =>
-              femaleVoiceNames.some((name) =>
-                v.name?.toLowerCase().includes(name)
-              )
-            );
-          }
-
-          // If still no female voice found, look for voices that aren't "compact" or "low quality"
-          // and exclude common male voice names
-          if (!preferredVoice) {
-            const maleVoiceNames = [
-              "daniel",
-              "alex",
-              "david",
-              "tom",
-              "john",
-              "mark",
-              "michael",
-            ];
-            preferredVoice = voices.find(
-              (v) =>
-                !v.name?.toLowerCase().includes("compact") &&
-                !v.name?.toLowerCase().includes("low") &&
-                !maleVoiceNames.some((name) =>
-                  v.name?.toLowerCase().includes(name)
-                ) &&
-                (v.language?.startsWith("en") || !v.language)
-            );
-          }
-
-          // Fallback to first English voice or first available voice
-          if (!preferredVoice) {
-            preferredVoice =
-              voices.find((v) => v.language?.startsWith("en")) || voices[0];
-          }
-
-          if (preferredVoice?.identifier) {
-            setSelectedVoice(preferredVoice.identifier);
-          }
-        }
-      } catch (error) {
-        console.log("Error getting voices:", error);
-        // Continue without voice selection - will use default
-      }
-    };
-
-    getNaturalVoice();
-  }, []);
 
   useEffect(() => {
     // Recipe data should always be provided as a prop from the parent component
@@ -1041,40 +959,7 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
   const currentStep = processedInstructions[currentStepIndex];
 
   // Auto-play audio when step changes (on swipe)
-  useEffect(() => {
-    if (!isMuted && currentStep) {
-      // Stop any ongoing speech
-      Speech.stop();
-      // Use speech field if available, otherwise fall back to action
-      const textToSpeak = currentStep.speech || currentStep.action;
-      if (textToSpeak && !isGlobalPaused) {
-        const speechOptions: Speech.SpeechOptions = {
-          language: "en",
-          pitch: 1.0,
-          rate: 1.0,
-        };
 
-        // Add voice if available
-        if (selectedVoice) {
-          speechOptions.voice = selectedVoice;
-        }
-
-        Speech.speak(textToSpeak, speechOptions);
-      }
-    }
-
-    return () => {
-      // Cleanup: stop speech when component unmounts or step changes
-      Speech.stop();
-    };
-  }, [
-    currentStepIndex,
-    currentStep?.speech,
-    currentStep?.action,
-    isMuted,
-    selectedVoice,
-    isGlobalPaused,
-  ]);
 
   const initialServings = useMemo(() => {
     // Use selectedServings if provided, otherwise use original yield
@@ -1371,23 +1256,21 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
   // Calculate overall recipe progress
   const overallProgress = useMemo(() => {
     if (processedInstructions.length === 0) return 0;
-    // If we're on the last step, return 100%
-    if (
-      currentStepIndex === processedInstructions.length - 1 &&
-      isStepComplete
-    ) {
+    
+    // Calculate progress based on current index
+    // This ensures the progress bar stays in sync with the step counter (e.g., 1/10 = 10%)
+    const progress = ((currentStepIndex + 1) / processedInstructions.length) * 100;
+    
+    // If we've completed the last step, ensure it stays at 100%
+    if (currentStepIndex === processedInstructions.length - 1 && isStepComplete) {
       return 100;
     }
-    const completedCount = Math.min(
-      completedSteps.length + (isStepComplete ? 1 : 0),
-      processedInstructions.length
-    );
-    return (completedCount / processedInstructions.length) * 100;
+    
+    return progress;
   }, [
-    completedSteps.length,
-    processedInstructions.length,
     currentStepIndex,
     isStepComplete,
+    processedInstructions.length,
   ]);
 
   // Glossary terms detection
@@ -1510,637 +1393,195 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
     getDurationInSeconds,
   ]);
 
-  // Helper to properly stop and clean up recognition
-  const stopRecognitionCompletely = useCallback(async () => {
-    // Prevent multiple simultaneous stops
-    if (isStoppingRef.current) {
-      return;
-    }
-    isStoppingRef.current = true;
-    setIsListening(false);
-
-    if (Platform.OS === "web" && recognitionRef.current) {
-      try {
-        if (typeof recognitionRef.current.stop === "function") {
-          recognitionRef.current.stop();
-        }
-      } catch (e) {
-        console.log("Error stopping web recognition:", e);
+  // TTS Functions
+  const stopAudio = useCallback(async () => {
+    try {
+      if (soundRef.current) {
+        await soundRef.current.stopAsync();
+        await soundRef.current.unloadAsync();
+        soundRef.current = null;
       }
-      recognitionRef.current = null;
-      isStoppingRef.current = false;
-    } else if (VoiceModule) {
-      try {
-        // Remove all listeners first to prevent any callbacks
-        VoiceModule.removeAllListeners();
-        // Wait a bit for listeners to clear
-        await new Promise((resolve) => setTimeout(resolve, 150));
-        // Then stop
-        try {
-          await VoiceModule.stop();
-        } catch (stopError: any) {
-          // Ignore "not started" errors - that's fine
-          if (
-            stopError?.message &&
-            !stopError.message.includes("not started")
-          ) {
-            console.log("Error stopping voice:", stopError);
-          }
-        }
-        // Wait longer to ensure cleanup is complete
-        await new Promise((resolve) => setTimeout(resolve, 500));
-      } catch (e: any) {
-        console.log("Error in stopRecognitionCompletely:", e);
-      } finally {
-        isStoppingRef.current = false;
-      }
-    } else {
-      isStoppingRef.current = false;
+      setIsPlaying(false);
+    } catch (error) {
+      console.log("Error stopping audio:", error);
     }
   }, []);
 
-  // Helper to stop recognition before speaking
-  const stopRecognitionBeforeSpeaking = useCallback(() => {
-    if (isListening) {
-      stopRecognitionCompletely();
-    }
-  }, [isListening, stopRecognitionCompletely]);
+  const playStepAudio = useCallback(async (text: string) => {
+    try {
+      // transform "1/2 cup" to "one half cup" for better speech if needed, 
+      // but Google TTS is usually smart enough.
+      
+      // Stop previous audio
+      await stopAudio();
 
-  // Voice command handlers
-  const handleVoiceCommand = useCallback(
-    (command: string) => {
-      if (isGlobalPaused) return;
-      // Prevent processing if we're already processing or too soon after last command
-      const now = Date.now();
-      if (
-        isProcessingCommandRef.current ||
-        now - lastCommandTimeRef.current < 2000
-      ) {
-        return;
-      }
+      if (!text) return;
 
-      // Ignore common TTS phrases that might be picked up
-      const lowerCommand = command.toLowerCase().trim();
-      const ttsPhrases = [
-        "moving to next step",
-        "going back to previous step",
-        "timer paused",
-        "timer resumed",
-        "timer started",
-        "you need",
-        "temperature is",
-        "time remaining",
-        "no ingredients",
-        "no temperature",
-        "no timer",
-      ];
-      if (ttsPhrases.some((phrase) => lowerCommand.includes(phrase))) {
-        return;
-      }
+      setIsPlaying(true);
+      const audioUri = await synthesizeSpeech(text);
 
-      isProcessingCommandRef.current = true;
-      lastCommandTimeRef.current = now;
-
-      // Stop recognition before processing command
-      stopRecognitionBeforeSpeaking();
-
-      // Next step - make matching more specific
-      if (
-        lowerCommand === "next step" ||
-        lowerCommand === "next" ||
-        lowerCommand === "continue" ||
-        lowerCommand.startsWith("next step") ||
-        lowerCommand.startsWith("go next")
-      ) {
-        handleNext();
-        // Don't speak - it causes feedback loop
-        setTimeout(() => {
-          isProcessingCommandRef.current = false;
-        }, 1000);
-        return;
-      }
-
-      // Previous step / Repeat step
-      if (
-        lowerCommand === "previous step" ||
-        lowerCommand === "back" ||
-        lowerCommand === "go back" ||
-        lowerCommand.startsWith("previous step") ||
-        lowerCommand.startsWith("go back")
-      ) {
-        handlePrevious();
-        // Restart recognition after step change
-        shouldAutoRestartRef.current = true;
-        setTimeout(() => {
-          isProcessingCommandRef.current = false;
-          // Restart recognition after a delay
-          if (shouldAutoRestartRef.current) {
-            setTimeout(() => {
-              if (!isListening) {
-                toggleVoiceRecognition();
-              }
-            }, 1500);
-          }
-        }, 1000);
-        return;
-      }
-
-      if (
-        lowerCommand === "repeat step" ||
-        lowerCommand === "repeat" ||
-        lowerCommand.startsWith("repeat step")
-      ) {
-        // Repeat current step - replay audio
-        if (currentStep?.speech || currentStep?.action) {
-          const textToSpeak = currentStep.speech || currentStep.action;
-          Speech.speak(textToSpeak, {
-            language: "en",
-            voice: selectedVoice,
-          });
-        }
-        setTimeout(() => {
-          isProcessingCommandRef.current = false;
-        }, 2000);
-        return;
-      }
-
-      if (
-        lowerCommand === "pause timer" ||
-        lowerCommand === "pause" ||
-        lowerCommand.startsWith("pause timer")
-      ) {
-        if (isTimerRunning && !isPaused) {
-          togglePause();
-        }
-        setTimeout(() => {
-          isProcessingCommandRef.current = false;
-        }, 1000);
-        return;
-      }
-
-      // Resume timer
-      if (
-        lowerCommand === "resume timer" ||
-        lowerCommand === "resume" ||
-        lowerCommand === "start timer" ||
-        lowerCommand.startsWith("resume timer") ||
-        lowerCommand.startsWith("start timer")
-      ) {
-        if (isPaused && currentStepTimer?.isRunning) {
-          togglePause();
-        } else if (!isTimerRunning && timeRemaining !== null) {
-          handleStartTimer();
-        }
-        setTimeout(() => {
-          isProcessingCommandRef.current = false;
-        }, 1000);
-        return;
-      }
-
-      // How much water / ingredient quantities
-      if (
-        lowerCommand.startsWith("how much") ||
-        lowerCommand.includes("how much water") ||
-        lowerCommand.includes("how much") ||
-        lowerCommand === "quantity" ||
-        lowerCommand === "amount"
-      ) {
-        if (currentStep?.ingredients && currentStep.ingredients.length > 0) {
-          const ingredientInfo = currentStep.ingredients
-            .map((ing) => {
-              const qty = ing.quantity
-                ? `${ing.quantity} ${ing.unit || ""}`
-                : "";
-              return qty ? `${qty} of ${ing.name}` : ing.name;
-            })
-            .join(", ");
-          Speech.speak(`You need ${ingredientInfo}`, {
-            language: "en",
-            voice: selectedVoice,
-          });
-        } else {
-          Speech.speak("No ingredients listed for this step", {
-            language: "en",
-          });
-        }
-        setTimeout(() => {
-          isProcessingCommandRef.current = false;
-        }, 2000);
-        return;
-      }
-
-      // Temperature
-      if (
-        lowerCommand === "temperature" ||
-        lowerCommand === "temp" ||
-        lowerCommand.startsWith("what temperature") ||
-        lowerCommand.startsWith("temperature")
-      ) {
-        if (currentStep?.temperature) {
-          Speech.speak(
-            `Temperature is ${currentStep.temperature} degrees ${
-              currentStep.temperatureUnit || "Fahrenheit"
-            }`,
-            { language: "en", voice: selectedVoice }
-          );
-        } else {
-          Speech.speak("No temperature specified for this step", {
-            language: "en",
-          });
-        }
-        setTimeout(() => {
-          isProcessingCommandRef.current = false;
-        }, 2000);
-        return;
-      }
-
-      // Time remaining
-      if (
-        lowerCommand === "time remaining" ||
-        lowerCommand === "how long" ||
-        lowerCommand.startsWith("time remaining") ||
-        lowerCommand.startsWith("how long")
-      ) {
-        if (timeRemaining !== null && timeRemaining > 0) {
-          Speech.speak(`Time remaining: ${formatTime(timeRemaining)}`, {
-            language: "en",
-            voice: selectedVoice,
-          });
-        } else {
-          Speech.speak("No timer running", { language: "en" });
-        }
-        setTimeout(() => {
-          isProcessingCommandRef.current = false;
-        }, 2000);
-        return;
-      }
-
-      // No command matched
-      isProcessingCommandRef.current = false;
-    },
-    [
-      handleNext,
-      handlePrevious,
-      currentStep,
-      togglePause,
-      isPaused,
-      isTimerRunning,
-      timeRemaining,
-      handleStartTimer,
-      selectedVoice,
-      stopRecognitionBeforeSpeaking,
-      isGlobalPaused,
-    ]
-  );
-
-  // Start/stop voice recognition
-  const toggleVoiceRecognition = useCallback(() => {
-    if (isListening) {
-      // Stop listening
-      setIsListening(false);
-      shouldAutoRestartRef.current = false; // Disable auto-restart when manually stopped
-      if (Platform.OS === "web" && recognitionRef.current) {
-        if (typeof recognitionRef.current.stop === "function") {
-          recognitionRef.current.stop();
-        }
-        recognitionRef.current = null;
-      } else if (VoiceModule) {
-        VoiceModule.stop().catch((e: any) =>
-          console.log("Error stopping voice:", e)
+      if (audioUri) {
+        const { sound } = await Audio.Sound.createAsync(
+          { uri: audioUri },
+          { shouldPlay: true }
         );
-        VoiceModule.removeAllListeners();
-      }
-    } else {
-      // Start listening
-      shouldAutoRestartRef.current = true; // Enable auto-restart when manually started
-      // Start listening
-      setIsListening(true);
-
-      // Use Web Speech Recognition API if available (web)
-      if (
-        Platform.OS === "web" &&
-        typeof window !== "undefined" &&
-        "webkitSpeechRecognition" in window
-      ) {
-        // @ts-ignore - webkitSpeechRecognition is not in types
-        const SpeechRecognition =
-          // @ts-ignore
-          window.SpeechRecognition || window.webkitSpeechRecognition;
-        const recognition = new SpeechRecognition();
-        recognition.continuous = false;
-        recognition.interimResults = false;
-        recognition.lang = "en-US";
-
-        recognition.onresult = (event: any) => {
-          const transcript = event.results[0][0].transcript;
-          handleVoiceCommand(transcript);
-          setIsListening(false);
-          // Auto-restart if enabled (unless manually stopped)
-          if (shouldAutoRestartRef.current) {
-            setTimeout(() => {
-              if (shouldAutoRestartRef.current) {
-                // Check if not already listening before restarting
-                setIsListening((current) => {
-                  if (!current) {
-                    // Restart recognition
-                    setTimeout(() => {
-                      // @ts-ignore - webkitSpeechRecognition is not in types
-                      const SpeechRecognition =
-                        // @ts-ignore
-                        (window as any).SpeechRecognition ||
-                        (window as any).webkitSpeechRecognition;
-                      const recognition = new SpeechRecognition();
-                      recognition.continuous = false;
-                      recognition.interimResults = false;
-                      recognition.lang = "en-US";
-                      recognition.onresult = (event: any) => {
-                        const transcript = event.results[0][0].transcript;
-                        handleVoiceCommand(transcript);
-                        setIsListening(false);
-                        if (shouldAutoRestartRef.current) {
-                          setTimeout(() => {
-                            if (shouldAutoRestartRef.current) {
-                              setIsListening((curr) => {
-                                if (!curr) {
-                                  // @ts-ignore - webkitSpeechRecognition is not in types
-                                  const SpeechRec =
-                                    // @ts-ignore
-                                    (window as any).SpeechRecognition ||
-                                    (window as any).webkitSpeechRecognition;
-                                  const rec = new SpeechRec();
-                                  rec.continuous = false;
-                                  rec.interimResults = false;
-                                  rec.lang = "en-US";
-                                  rec.onresult = (e: any) => {
-                                    handleVoiceCommand(
-                                      e.results[0][0].transcript
-                                    );
-                                    setIsListening(false);
-                                  };
-                                  rec.onerror = () => setIsListening(false);
-                                  rec.onend = () => setIsListening(false);
-                                  rec.start();
-                                  recognitionRef.current = rec;
-                                  return true;
-                                }
-                                return curr;
-                              });
-                            }
-                          }, 2000);
-                        }
-                      };
-                      recognition.onerror = () => setIsListening(false);
-                      recognition.onend = () => setIsListening(false);
-                      recognition.start();
-                      recognitionRef.current = recognition;
-                      return true;
-                    }, 500);
-                  }
-                  return current;
-                });
-              }
-            }, 2000);
-          }
-        };
-
-        recognition.onerror = (event: any) => {
-          console.log("Speech recognition error:", event.error);
-          setIsListening(false);
-        };
-
-        recognition.onend = () => {
-          setIsListening(false);
-        };
-
-        recognition.start();
-        recognitionRef.current = recognition;
-      } else if (VoiceModule) {
-        // Use @react-native-voice/voice for native platforms
-        VoiceModule.onSpeechStart = () => {
-          console.log("Voice recognition started");
-        };
-
-        VoiceModule.onSpeechEnd = () => {
-          setIsListening(false);
-        };
-
-        VoiceModule.onSpeechError = async (e: any) => {
-          console.log("Speech recognition error:", e);
-          setIsListening(false);
-
-          const errorMessage = e.error?.message || e.message || "";
-          const errorCode = e.error?.code || "";
-
-          // Don't auto-restart on "no speech detected" - user needs to try again
-          if (
-            errorMessage.includes("No speech detected") ||
-            errorMessage.includes("1110") ||
-            errorCode === "recognition_fail"
-          ) {
-            // Just stop, don't restart - user can tap mic button again
-            await stopRecognitionCompletely();
-            shouldAutoRestartRef.current = false; // Disable auto-restart on this error
-            return;
-          }
-
-          // For other errors, show alert but don't auto-restart
-          await stopRecognitionCompletely();
-          shouldAutoRestartRef.current = false;
-
-          // Only show alert for non-trivial errors
-          if (
-            !errorMessage.includes("not started") &&
-            !errorMessage.includes("cancelled")
-          ) {
-            Alert.alert(
-              "Voice Recognition Error",
-              errorMessage || "Failed to recognize speech"
-            );
-          }
-        };
-
-        VoiceModule.onSpeechResults = async (e: any) => {
-          // Only process if we actually got speech results
-          if (e.value && e.value.length > 0) {
-            const transcript = e.value[0];
-            handleVoiceCommand(transcript);
-          }
-
-          // Stop recognition completely first
-          await stopRecognitionCompletely();
-
-          // Auto-restart if enabled (unless manually stopped) - only restart if we got valid speech
-          if (shouldAutoRestartRef.current && e.value && e.value.length > 0) {
-            // Wait longer to ensure cleanup is complete
-            setTimeout(async () => {
-              if (shouldAutoRestartRef.current && !isListening) {
-                try {
-                  // Make absolutely sure it's stopped
-                  await stopRecognitionCompletely();
-                  await new Promise((resolve) => setTimeout(resolve, 300));
-
-                  // Set up fresh listeners
-                  VoiceModule.onSpeechStart = () => {
-                    console.log("Voice recognition started");
-                  };
-                  VoiceModule.onSpeechEnd = () => {
-                    setIsListening(false);
-                  };
-                  VoiceModule.onSpeechError = async (err: any) => {
-                    console.log("Speech recognition error:", err);
-                    setIsListening(false);
-
-                    const errorMessage =
-                      err?.error?.message || err?.message || "";
-                    const errorCode = err?.error?.code || "";
-
-                    // Don't auto-restart on "no speech detected"
-                    if (
-                      errorMessage.includes("No speech detected") ||
-                      errorMessage.includes("1110") ||
-                      errorCode === "recognition_fail"
-                    ) {
-                      await stopRecognitionCompletely();
-                      shouldAutoRestartRef.current = false;
-                      return;
-                    }
-
-                    // If error is "already started", stop and retry
-                    if (
-                      errorMessage.includes("already started") ||
-                      err?.message?.includes("already started")
-                    ) {
-                      await stopRecognitionCompletely();
-                      await new Promise((resolve) => setTimeout(resolve, 500));
-                      if (shouldAutoRestartRef.current && !isListening) {
-                        try {
-                          await VoiceModule.start("en-US");
-                          setIsListening(true);
-                        } catch (retryError) {
-                          console.log("Retry error:", retryError);
-                          setIsListening(false);
-                          shouldAutoRestartRef.current = false;
-                        }
-                      }
-                    } else {
-                      // Other errors - stop auto-restart
-                      await stopRecognitionCompletely();
-                      shouldAutoRestartRef.current = false;
-                    }
-                  };
-                  VoiceModule.onSpeechResults = async (result: any) => {
-                    if (result.value && result.value.length > 0) {
-                      handleVoiceCommand(result.value[0]);
-                    }
-                    await stopRecognitionCompletely();
-                    if (shouldAutoRestartRef.current) {
-                      setTimeout(async () => {
-                        if (shouldAutoRestartRef.current && !isListening) {
-                          await stopRecognitionCompletely();
-                          await new Promise((resolve) =>
-                            setTimeout(resolve, 300)
-                          );
-                          try {
-                            VoiceModule.onSpeechStart = () => {};
-                            VoiceModule.onSpeechEnd = () =>
-                              setIsListening(false);
-                            VoiceModule.onSpeechError = async () => {
-                              setIsListening(false);
-                              await stopRecognitionCompletely();
-                              shouldAutoRestartRef.current = false;
-                            };
-                            VoiceModule.onSpeechResults = async (r: any) => {
-                              if (r.value && r.value.length > 0) {
-                                handleVoiceCommand(r.value[0]);
-                              }
-                              await stopRecognitionCompletely();
-                            };
-                            await VoiceModule.start("en-US");
-                            setIsListening(true);
-                          } catch (error: any) {
-                            console.log("Error restarting:", error);
-                            setIsListening(false);
-                          }
-                        }
-                      }, 2000);
-                    }
-                  };
-
-                  // Now start - check one more time before starting
-                  if (!isListening && !isStoppingRef.current) {
-                    await VoiceModule.start("en-US");
-                    setIsListening(true);
-                  }
-                } catch (error: any) {
-                  console.log("Error restarting voice recognition:", error);
-                  setIsListening(false);
-                  // If "already started", stop and don't retry (user can tap mic)
-                  const errorMsg =
-                    typeof error === "string" ? error : error?.message || "";
-                  if (errorMsg.includes("already started")) {
-                    await stopRecognitionCompletely();
-                    shouldAutoRestartRef.current = false;
-                  }
-                } finally {
-                  isStartingRef.current = false;
-                }
-              }
-            }, 2500); // Longer delay to ensure cleanup
-          }
-        };
-
-        // Make sure we're not already listening before starting
-        if (isStartingRef.current || isStoppingRef.current) {
-          console.log("Already starting or stopping, skipping...");
-          return;
-        }
-
-        isStartingRef.current = true;
-        stopRecognitionCompletely().then(async () => {
-          // Wait longer to ensure cleanup
-          await new Promise((resolve) => setTimeout(resolve, 800));
-
-          try {
-            // Double check we're not already listening
-            if (isListening || isStoppingRef.current) {
-              console.log("Already listening or stopping, aborting start");
-              isStartingRef.current = false;
-              return;
-            }
-
-            await VoiceModule.start("en-US");
-            setIsListening(true);
-          } catch (e: any) {
-            console.log("Error starting voice recognition:", e);
-            setIsListening(false);
-            if (e?.message?.includes("already started")) {
-              // If already started, stop completely and don't auto-retry
-              await stopRecognitionCompletely();
-              shouldAutoRestartRef.current = false;
-              Alert.alert(
-                "Voice Recognition Error",
-                "Recognition is already running. Please tap the mic button to stop it first."
-              );
-            } else {
-              Alert.alert(
-                "Permission Required",
-                "Please grant microphone permission to use voice commands."
-              );
-            }
-          } finally {
-            isStartingRef.current = false;
+        soundRef.current = sound;
+        
+        sound.setOnPlaybackStatusUpdate((status) => {
+          if (status.isLoaded && status.didJustFinish) {
+            setIsPlaying(false);
           }
         });
       } else {
-        // Library not installed
-        setIsListening(false);
-        Alert.alert(
-          "Voice Commands",
-          "Please install @react-native-voice/voice for voice recognition:\n\nnpm install @react-native-voice/voice\n\nThen run: npx pod-install (for iOS)\n\nTry saying:\n• 'Next step'\n• 'Repeat step'\n• 'Pause timer'\n• 'How much water?'"
-        );
+        setIsPlaying(false);
+      }
+    } catch (error) {
+      console.log("Error playing audio:", error);
+      setIsPlaying(false);
+    }
+  }, [stopAudio]);
+
+  // Auto-read effect
+  useEffect(() => {
+    if (isTTSEnabled && !isGlobalPaused && !isLoading && currentStep?.action && !isCompleted) {
+      // Only auto-play if we haven't read this step index yet
+      if (!spokenStepsRef.current.has(currentStepIndex)) {
+        // Small delay to allow transition to settle
+        const timer = setTimeout(() => {
+          const textToRead = currentStep.speech || currentStep.action;
+          playStepAudio(textToRead);
+          // Mark as spoken
+          spokenStepsRef.current.add(currentStepIndex);
+        }, 500);
+        return () => clearTimeout(timer);
+      }
+    } else {
+      stopAudio();
+    }
+  }, [currentStepIndex, isTTSEnabled, isGlobalPaused, isLoading, currentStep, isCompleted]);
+
+  // Cleanup audio on unmount
+  useEffect(() => {
+    return () => {
+      stopAudio();
+    };
+  }, []);
+
+  // Voice Command Handler (Deterministic Engine)
+  const handleVoiceCommand = useCallback((transcript: string) => {
+    const now = Date.now();
+    // 1.5 second cooldown to prevent double-triggers (especially from partial results)
+    if (now - lastCommandRef.current < 1500) {
+      return false;
+    }
+
+    const text = transcript.toLowerCase().trim();
+    if (!text) return false;
+
+    console.log("[Voice] Received:", text);
+
+    const commands = [
+      { match: ["next step", "next", "continue", "forward", "ready"], action: () => goToNextStep() },
+      { match: ["back", "previous", "go back", "previous step"], action: () => goToPreviousStep() },
+      { match: ["pause", "stop", "pause timer"], action: () => {
+          if (currentStepTimer?.isRunning) {
+            pauseStoreTimer(currentStepTimer.id);
+            setIsPaused(true);
+          }
+      }},
+      { match: ["start timer", "begin", "start", "resume"], action: () => handleStartTimer() },
+      { match: ["repeat", "say again", "repeat instruction"], action: () => {
+          const textToRead = currentStep.speech || currentStep.action;
+          playStepAudio(textToRead);
+      }},
+      { match: ["add one minute", "add 1 minute", "minute extra"], action: () => handleAddMinute() },
+    ];
+
+    for (const cmd of commands) {
+      if (cmd.match.some(m => text.includes(m))) {
+        lastCommandRef.current = now; // Set cooldown
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        
+        // Stop recognition immediately and clear transcript to avoid race conditions
+        Voice.stop().catch(e => console.log("Voice stop error:", e));
+        setPartialTranscript("");
+        
+        cmd.action();
+        return true;
       }
     }
-  }, [isListening, handleVoiceCommand]);
+    return false;
+  }, [goToNextStep, goToPreviousStep, currentStepTimer, pauseStoreTimer, handleStartTimer, currentStep, playStepAudio, handleAddMinute]);
+
+  // Keep Ref in sync for listeners to stay stable
+  useEffect(() => {
+    handleVoiceCommandRef.current = handleVoiceCommand;
+  }, [handleVoiceCommand]);
+
+  // Stable Voice Recognition Listeners
+  useEffect(() => {
+    if (!isVoiceEnabled) {
+      Voice.stop().catch(() => {});
+      return;
+    }
+
+    const startVoice = async () => {
+      if (isVoiceStartingRef.current) return;
+      try {
+        isVoiceStartingRef.current = true;
+        await Voice.start('en-US');
+      } catch (e) {
+        console.log("Voice start error helper:", e);
+      } finally {
+        isVoiceStartingRef.current = false;
+      }
+    };
+
+    Voice.onSpeechStart = () => setIsListening(true);
+    
+    Voice.onSpeechEnd = () => {
+      setIsListening(false);
+      if (isVoiceEnabled) {
+        setTimeout(startVoice, 500);
+      }
+    };
+
+    Voice.onSpeechError = (e) => {
+      // Log only real errors, ignore "already started" in console if possible
+      if (e.error?.message !== "Speech recognition already started!") {
+        console.log("Voice Error:", e);
+      }
+      setIsListening(false);
+      if (isVoiceEnabled) {
+        setTimeout(startVoice, 1000);
+      }
+    };
+
+    Voice.onSpeechResults = (e) => {
+      if (e.value && e.value.length > 0) {
+        handleVoiceCommandRef.current?.(e.value[0]);
+      }
+    };
+
+    Voice.onSpeechPartialResults = (e) => {
+      if (e.value && e.value.length > 0) {
+        setPartialTranscript(e.value[0]);
+        handleVoiceCommandRef.current?.(e.value[0]);
+      }
+    };
+
+    // Initial start
+    startVoice();
+
+    return () => {
+      Voice.destroy().then(Voice.removeAllListeners);
+    };
+    // Dependency array is minimal to prevent redundant re-renders
+  }, [isVoiceEnabled]);
+
+
+
+
 
   // Handle add 1 minute
   const handleAddMinute = useCallback(() => {
@@ -2156,12 +1597,12 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
 
   const confirmExit = useCallback(() => {
     // Stop any ongoing speech
-    Speech.stop();
+    stopAudio();
     if (keepAwakeActive) {
       deactivateKeepAwake();
     }
     router.back();
-  }, [keepAwakeActive, router]);
+  }, [keepAwakeActive, router, stopAudio]);
 
   // Get shortened recipe title
   const recipeTitle = useMemo(() => {
@@ -2272,9 +1713,6 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
             <Pressable
               onPress={() => {
                 Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
-                if (!isGlobalPaused) {
-                  Speech.stop();
-                }
                 toggleGlobalPause();
               }}
               className={`w-10 h-10 rounded-full items-center justify-center active:opacity-70 ${
@@ -2291,42 +1729,95 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
         </View>
 
         {/* Progress Bar with Counter */}
-        <View className="flex-row items-center px-4 pb-2">
+        <MotiView
+          animate={{
+            opacity: isTimerRunning ? [1, 0.7, 1] : 1,
+            scale: isTimerRunning ? [1, 1.01, 1] : 1,
+          }}
+          transition={{
+            type: "timing",
+            duration: 1500,
+            loop: true,
+          }}
+          className="flex-row items-center px-4 pb-2"
+        >
           <View className="flex-1 h-2 bg-neutral-800 rounded-full overflow-hidden">
             <Animated.View
               className="h-full bg-amber-500 rounded-full"
               style={progressStyle}
             />
           </View>
-          <Text className="ml-3 text-neutral-400 text-sm font-medium min-w-[60px] text-right">
-            {currentStepIndex + 1} / {processedInstructions.length}
-          </Text>
-        </View>
+          <View className="ml-4 items-end justify-center">
+            <View className="flex-row items-baseline">
+              <MotiView
+                key={currentStepIndex}
+                from={{ scale: 0.5, opacity: 0, translateY: 10 }}
+                animate={{ scale: 1, opacity: 1, translateY: 0 }}
+                transition={{ type: 'spring', damping: 12 }}
+              >
+                <Text className="text-amber-500 text-3xl font-black italic tracking-tighter">
+                  {currentStepIndex + 1}
+                </Text>
+              </MotiView>
+              <Text className="text-neutral-600 text-lg font-bold ml-1">
+                / {processedInstructions.length}
+              </Text>
+            </View>
+          </View>
+        </MotiView>
 
-        {/* Background Timers Strip */}
-        {activeBackgroundTimers.length > 0 && (
+        {/* Active Timers Strip */}
+        {activeTimers.length > 0 && (
           <Animated.View 
             entering={FadeInUp.duration(300)}
             className="px-4 pb-3 flex-row flex-wrap gap-2"
           >
-            {activeBackgroundTimers.map((timer) => (
-              <Pressable
-                key={timer.id}
-                onPress={() => {
-                  const stepIdx = processedInstructions.findIndex((_, idx) => `step-${idx}` === timer.stepId);
-                  if (stepIdx !== -1) {
-                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                    startStep(stepIdx);
-                  }
-                }}
-                className="flex-row items-center bg-amber-500/10 border border-amber-500/20 rounded-full px-3 py-1.5"
-              >
-                <Timer size={14} color="#f59e0b" />
-                <Text className="text-amber-500 text-xs font-bold ml-1.5">
-                  Step {processedInstructions.findIndex((_, idx) => `step-${idx}` === timer.stepId) + 1}: {formatTime(timer.remainingSeconds)}
-                </Text>
-              </Pressable>
-            ))}
+            {activeTimers.map((timer) => {
+              const stepIdx = processedInstructions.findIndex((_, idx) => `step-${idx}` === timer.stepId);
+              const isCurrentStep = stepIdx === currentStepIndex;
+              
+              return (
+                <MotiView
+                  key={`timer-moti-${timer.id}`}
+                  animate={{ 
+                    scale: isCurrentStep ? [1, 1.06, 1] : 1,
+                    opacity: isCurrentStep ? 1 : 0.8,
+                    shadowOpacity: isCurrentStep ? [0, 0.8, 0] : 0,
+                  }}
+                  transition={{
+                    type: "timing",
+                    duration: 1200,
+                    loop: true,
+                  }}
+                  style={{
+                    shadowColor: "#f59e0b",
+                    shadowOffset: { width: 0, height: 0 },
+                    shadowRadius: 8,
+                  }}
+                >
+                  <Pressable
+                    onPress={() => {
+                      if (stepIdx !== -1) {
+                        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                        startStep(stepIdx);
+                      }
+                    }}
+                    className={`flex-row items-center border rounded-full px-4 py-2 ${
+                      isCurrentStep 
+                        ? "bg-amber-500 border-amber-600" 
+                        : "bg-amber-500/10 border-amber-500/30"
+                    }`}
+                  >
+                    <Timer size={18} color={isCurrentStep ? "#000000" : "#f59e0b"} />
+                    <Text className={`font-bold ml-2 ${
+                      isCurrentStep ? "text-black text-base" : "text-amber-500 text-sm"
+                    }`}>
+                      {stepIdx !== -1 ? `Step ${stepIdx + 1}: ` : ""}{formatTime(timer.remainingSeconds)}
+                    </Text>
+                  </Pressable>
+                </MotiView>
+              );
+            })}
           </Animated.View>
         )}
 
@@ -2544,13 +2035,29 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
 
               {/* Timer Button */}
               {currentStep.duration && (
+                <MotiView
+                  animate={{
+                    scale: isTimerRunning ? [1, 1.03, 1] : 1,
+                    shadowOpacity: isTimerRunning ? [0, 0.5, 0] : 0,
+                  }}
+                  transition={{
+                    type: "timing",
+                    duration: 2000,
+                    loop: true,
+                  }}
+                  style={{
+                    shadowColor: "#f59e0b",
+                    shadowOffset: { width: 0, height: 0 },
+                    shadowRadius: 10,
+                  }}
+                >
                   <Pressable
                     onPress={handleStartTimer}
                     className={`rounded-2xl px-6 py-4 mt-2 ${
                       isTimerComplete 
                         ? "bg-green-500" 
                         : isTimerRunning 
-                          ? "bg-neutral-800 border border-amber-500/30" 
+                          ? "bg-neutral-800 border border-amber-500/50" 
                           : "bg-amber-500"
                     } active:opacity-80`}
                     onPressIn={() =>
@@ -2578,7 +2085,7 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
                           isTimerComplete
                             ? "text-black"
                             : isTimerRunning
-                            ? "text-neutral-400"
+                            ? "text-neutral-300"
                             : "text-black"
                         }`}
                       >
@@ -2592,9 +2099,68 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
                       </Text>
                     </View>
                   </Pressable>
+                </MotiView>
               )}
             </View>
           )}
+
+          {/* Voice Command Toggle / Status */}
+          <Pressable
+            onPress={() => {
+              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+              setIsVoiceEnabled(!isVoiceEnabled);
+            }}
+            className="absolute top-4 right-16 z-50 w-10 h-10 rounded-full bg-neutral-800/80 items-center justify-center border border-neutral-700/50"
+          >
+            {isVoiceEnabled ? (
+              <MotiView
+                animate={{
+                  scale: isListening ? [1, 1.2, 1] : 1,
+                  opacity: isListening ? [1, 0.6, 1] : 1,
+                }}
+                transition={{
+                  type: 'timing',
+                  duration: 1000,
+                  loop: true,
+                }}
+              >
+                <Mic
+                  size={20}
+                  color={isListening ? "#f59e0b" : "#ffffff"}
+                />
+              </MotiView>
+            ) : (
+              <MicOff size={20} color="#6b7280" />
+            )}
+          </Pressable>
+
+          {/* TTS Speaker Toggle / Manual Trigger */}
+          <Pressable
+            onPress={() => {
+              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+              if (isPlaying) {
+                stopAudio();
+              } else if (currentStep) {
+                const textToRead = currentStep.speech || currentStep.action;
+                playStepAudio(textToRead);
+                // Also mark as spoken if it wasn't already (though it usually would be)
+                spokenStepsRef.current.add(currentStepIndex);
+              }
+            }}
+            className="absolute top-4 right-4 z-50 w-10 h-10 rounded-full bg-neutral-800/80 items-center justify-center border border-neutral-700/50"
+          >
+            <View>
+              {isPlaying ? (
+                <Volume2
+                  size={20}
+                  color="#f59e0b"
+                  className="animate-pulse"
+                />
+              ) : (
+                <Volume2 size={20} color="#ffffff" />
+              )}
+            </View>
+          </Pressable>
         </ScrollView>
 
         {/* Bottom Navigation Bar */}
@@ -2666,7 +2232,9 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
                 {currentStepIndex ===
                 (recipeData?.processedInstructions?.length || 1) - 1
                   ? "Done!"
-                  : "Next"}
+                  : currentStep?.canDoNextStepInParallel 
+                    ? "Next (Ready Now)" 
+                    : "Next"}
               </Text>
               {currentStepIndex !==
                 (recipeData?.processedInstructions?.length || 1) - 1 && (

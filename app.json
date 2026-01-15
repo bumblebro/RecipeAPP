@@ -15,8 +15,8 @@
       "appleTeamId": "5WJ6NJFUKB",
       "googleServicesFile": "./GoogleService-Info.plist",
       "infoPlist": {
-        "NSMicrophoneUsageDescription": "We need access to your microphone to enable voice commands for hands-free cooking.",
-        "NSSpeechRecognitionUsageDescription": "We need speech recognition to process your voice commands while cooking."
+        "NSMicrophoneUsageDescription": "This app uses the microphone to listen for voice commands during cooking.",
+        "NSSpeechRecognitionUsageDescription": "This app uses speech recognition to process your voice commands."
       }
     },
     "android": {
@@ -30,9 +30,8 @@
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
       "package": "com.outvibe.RecipeAPP",
-      "permissions": [
-        "android.permission.RECORD_AUDIO"
-      ]
+      "permissions": ["RECORD_AUDIO"]
+
     },
     "web": {
       "output": "static",

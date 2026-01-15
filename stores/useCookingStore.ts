@@ -13,6 +13,7 @@ interface CookingState {
   lastActiveAt: number | null;
   isPaused: boolean;
 
+
   // Ingredient Tracking
   usedIngredientIds: string[];
 
@@ -39,6 +40,7 @@ interface CookingState {
   completeRecipe: () => void;
   resetSession: () => void;
   togglePause: () => void;
+
   hasActiveSession: () => boolean;
 }
 
@@ -71,6 +73,7 @@ export const useCookingStore = create<CookingState>()(
       timers: [],
       isPaused: false,
 
+
       // Session Management
       startCooking: (recipe: Recipe, rawData?: any) => {
         set({
@@ -84,6 +87,7 @@ export const useCookingStore = create<CookingState>()(
           completedSteps: [],
           timers: [],
           isPaused: false,
+
         });
       },
 
@@ -280,6 +284,7 @@ export const useCookingStore = create<CookingState>()(
           completedSteps: [],
           timers: [],
           isPaused: false,
+
         });
       },
 
@@ -311,6 +316,7 @@ export const useCookingStore = create<CookingState>()(
         startedAt: state.startedAt,
         lastActiveAt: state.lastActiveAt,
         isPaused: state.isPaused,
+
       }),
     }
   )
