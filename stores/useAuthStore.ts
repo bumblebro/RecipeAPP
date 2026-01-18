@@ -8,6 +8,7 @@ import { persist, createJSONStorage } from 'zustand/middleware';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { AuthStore, AuthState, AuthUser, AuthError } from '../types/auth';
 import { AuthService } from '../features/auth/auth.service';
+import { revenueCatService } from '../lib/revenuecat-service';
 
 // Initial state
 const initialState: AuthState = {
@@ -94,6 +95,17 @@ export function initializeAuthListener(): () => void {
     currentStore.setUser(user);
     currentStore.setLoading(false);
     currentStore.setInitialized(true);
+
+    // Sync with RevenueCat
+    if (user) {
+      revenueCatService.loginUser(user.uid).catch(e => 
+        console.error('Failed to sync RevenueCat user:', e)
+      );
+    } else {
+      revenueCatService.logoutUser().catch(e => 
+        console.error('Failed to logout RevenueCat user:', e)
+      );
+    }
   });
 
   return () => {

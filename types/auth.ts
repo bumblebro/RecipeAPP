@@ -1,6 +1,6 @@
 /**
  * Authentication type definitions
- * Types for Firebase Auth integration with the RecipeAPP
+ * Types for Firebase Auth integration with StepChef
  */
 
 import { z } from 'zod';

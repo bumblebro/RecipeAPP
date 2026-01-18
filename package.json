@@ -1,5 +1,5 @@
 {
-  "name": "recipeapp",
+  "name": "stepchef",
   "main": "expo-router/entry",
   "version": "1.0.0",
   "scripts": {
@@ -56,7 +56,8 @@
     "react-native-confetti-cannon": "^1.5.2",
     "react-native-gesture-handler": "~2.28.0",
     "react-native-progress": "^5.0.1",
-    "react-native-purchases": "^9.6.15",
+    "react-native-purchases": "^9.7.0",
+    "react-native-purchases-ui": "^9.7.0",
     "react-native-reanimated": "~4.1.1",
     "react-native-safe-area-context": "~5.6.0",
     "react-native-screens": "~4.16.0",

@@ -7,17 +7,17 @@
   "client": [
     {
       "client_info": {
-        "mobilesdk_app_id": "1:539559818790:android:e8c33f95ee3e5534b198e7",
+        "mobilesdk_app_id": "1:539559818790:android:c3114ee1f4b8378bb198e7",
         "android_client_info": {
-          "package_name": "com.outvibe.RecipeAPP"
+          "package_name": "com.outvibe.stepchef"
         }
       },
       "oauth_client": [
         {
-          "client_id": "539559818790-n4eemgobrt3efejvrb1r6v40pu2cv48p.apps.googleusercontent.com",
+          "client_id": "539559818790-sc4696oalrb9kebvdp5bhdu2g9jcin22.apps.googleusercontent.com",
           "client_type": 1,
           "android_info": {
-            "package_name": "com.outvibe.RecipeAPP",
+            "package_name": "com.outvibe.stepchef",
             "certificate_hash": "dc23131aa0739c80c9e81a9a45b69b96f37602e7"
           }
         },
@@ -39,10 +39,10 @@
               "client_type": 3
             },
             {
-              "client_id": "539559818790-df1baia3m51g8fjerl5sv7dlghu12pg9.apps.googleusercontent.com",
+              "client_id": "539559818790-c70r0m5qqfm6do1tjloogmi8ck6m7vte.apps.googleusercontent.com",
               "client_type": 2,
               "ios_info": {
-                "bundle_id": "com.outvibe.RecipeAPP"
+                "bundle_id": "com.outvibe.stepchef"
               }
             }
           ]

@@ -33,6 +33,7 @@ interface CookbookState {
   updateRecipe: (recipeId: string, updates: Partial<CookbookRecipe>) => void;
   getCookbookRecipes: (cookbookId: string) => CookbookRecipe[];
   getFavoriteRecipes: () => CookbookRecipe[];
+  clearCookbook: () => void;
 }
 
 export const useCookbookStore = create<CookbookState>()(
@@ -172,6 +173,21 @@ export const useCookbookStore = create<CookbookState>()(
         return state.favorites
           .map((id) => state.recipes[id])
           .filter(Boolean);
+      },
+
+      clearCookbook: () => {
+        set({
+          cookbooks: [
+            {
+              id: "favorites",
+              name: "⭐ Favorites",
+              recipeIds: [],
+              createdAt: Date.now(),
+            },
+          ],
+          recipes: {},
+          favorites: [],
+        });
       },
     }),
     {

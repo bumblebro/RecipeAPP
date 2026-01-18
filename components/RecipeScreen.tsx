@@ -17,7 +17,6 @@ import {
   Alert,
   PanResponder,
   Dimensions,
-  Modal,
   TextInput,
   Platform,
 } from "react-native";
@@ -36,6 +35,7 @@ import { mapRecipeDataToRecipe } from "../utils/recipeMapper";
 import { synthesizeSpeech } from "../utils/googleTTS";
 import Voice from '@react-native-voice/voice';
 import { Volume2, VolumeX } from "lucide-react-native";
+import { useSettingsStore } from "../stores/useSettingsStore";
 import Animated, {
   useAnimatedStyle,
   useSharedValue,
@@ -44,7 +44,11 @@ import Animated, {
   interpolate,
   Extrapolate,
   Easing,
+  FadeIn,
+  FadeOut,
   FadeInUp,
+  SlideInDown,
+  SlideOutDown,
 } from "react-native-reanimated";
 import * as Haptics from "expo-haptics";
 import { MotiView, AnimatePresence } from "moti";
@@ -207,38 +211,8 @@ interface RecipeData {
   };
 }
 
-// Helper function to format quantities as fractions
-const formatQuantity = (quantity: number | null): string => {
-  if (quantity === null) return "";
-  if (quantity === 0.5) return "1/2";
-  if (quantity === 0.25) return "1/4";
-  if (quantity === 0.75) return "3/4";
-  if (quantity === 0.33) return "1/3";
-  if (quantity === 0.67) return "2/3";
-  if (quantity === 0.125) return "1/8";
-  if (quantity === 0.375) return "3/8";
-  if (quantity === 0.625) return "5/8";
-  if (quantity === 0.875) return "7/8";
-
-  if (quantity > 1) {
-    const whole = Math.floor(quantity);
-    const decimal = quantity - whole;
-
-    if (decimal === 0.5) return `${whole} 1/2`;
-    if (decimal === 0.25) return `${whole} 1/4`;
-    if (decimal === 0.75) return `${whole} 3/4`;
-    if (decimal === 0.33) return `${whole} 1/3`;
-    if (decimal === 0.67) return `${whole} 2/3`;
-    if (decimal === 0.125) return `${whole} 1/8`;
-    if (decimal === 0.375) return `${whole} 3/8`;
-    if (decimal === 0.625) return `${whole} 5/8`;
-    if (decimal === 0.875) return "7/8";
-  }
-
-  if (Number.isInteger(quantity)) return quantity.toString();
-
-  return quantity.toFixed(1);
-};
+// Helper function to format quantities as fractions - imported from lib/format
+import { formatQuantity } from "../lib/format";
 
 const formatDuration = (duration: string): string => {
   const time = duration.replace("PT", "");
@@ -350,8 +324,8 @@ const renderTextWithBoldNumbers = (text: string): React.ReactNode => {
 
 interface RecipeScreenProps {
   recipe:
-    | (RecipeData & { processedInstructions?: ProcessedInstruction[] })
-    | null;
+  | (RecipeData & { processedInstructions?: ProcessedInstruction[] })
+  | null;
 }
 
 export default function RecipeScreen({ recipe }: RecipeScreenProps) {
@@ -412,15 +386,37 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
   const [showIngredientsModal, setShowIngredientsModal] = useState(false);  // UI State
   const [showTimersModal, setShowTimersModal] = useState(false);
   const [showCompletionScreen, setShowCompletionScreen] = useState(false);
-  
+
   // Voice State
   const [isListening, setIsListening] = useState(false);
   const [partialTranscript, setPartialTranscript] = useState("");
-  const [isVoiceEnabled, setIsVoiceEnabled] = useState(true); // Default to on for this premium feature
+  const {
+    voiceEnabled: settingsVoiceEnabled,
+    keepScreenAwake: settingsKeepScreenAwake
+  } = useSettingsStore();
 
-
-  // UI State
   const [keepAwakeActive, setKeepAwakeActive] = useState(false);
+  const [isVoiceEnabled, setIsVoiceEnabled] = useState(settingsVoiceEnabled);
+
+  // Sync with settings but allow local override
+  useEffect(() => {
+    setIsVoiceEnabled(settingsVoiceEnabled);
+  }, [settingsVoiceEnabled]);
+
+  // Keep screen awake logic
+  useEffect(() => {
+    if (settingsKeepScreenAwake) {
+      activateKeepAwake();
+      setKeepAwakeActive(true);
+    } else {
+      deactivateKeepAwake();
+      setKeepAwakeActive(false);
+    }
+
+    return () => {
+      deactivateKeepAwake();
+    };
+  }, [settingsKeepScreenAwake]);
 
   // TTS State
   const [isTTSEnabled, setIsTTSEnabled] = useState(true);
@@ -525,7 +521,7 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
   useEffect(() => {
     const tickInterval = setInterval(() => {
       if (isGlobalPaused) return;
-      
+
       // Find all running timers that aren't complete
       const runningTimers = timers.filter(t => t.isRunning && !t.isComplete);
       if (runningTimers.length > 0) {
@@ -590,7 +586,7 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
       if (timer.isComplete && !playedTimerAlerts.current.has(timer.id)) {
         // Mark as played first to prevent race conditions
         playedTimerAlerts.current.add(timer.id);
-        
+
         // Sound and Haptics
         playCompletionSound();
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
@@ -615,9 +611,9 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
 
     // Update local state for current step specifically (for UI toggle)
     if (currentStepTimer?.isComplete) {
-       setIsTimerComplete(true);
+      setIsTimerComplete(true);
     } else {
-       setIsTimerComplete(false);
+      setIsTimerComplete(false);
     }
   }, [timers, currentStepIndex, currentStepTimer?.isComplete, playCompletionSound, startStep]);
 
@@ -652,23 +648,20 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
       currentStepIndex <= 0
     )
       return;
-    
+
     goToPreviousStep();
     setIsPaused(false);
     setIsStepComplete(false);
     setIsTimerComplete(false);
   }, [recipeData, currentStepIndex, goToPreviousStep]);
 
-  // Swipe gesture handling with animations
-  const swipeThreshold = SCREEN_WIDTH * 0.25; // 25% of screen width
-  const translateX = useSharedValue(0);
+  // Swipe gesture handling logic (without visual horizontal translation as requested)
+  const swipeThreshold = SCREEN_WIDTH * 0.35; 
+  const translateX = useSharedValue(0); // Kept for potential future use or non-intrusive feedback
   const isSwiping = useSharedValue(false);
 
-  const swipeAnimatedStyle = useAnimatedStyle(() => {
-    return {
-      transform: [{ translateX: translateX.value }],
-    };
-  });
+  // We are keeping the gesture detection but removing the translateX style from the main view
+  // to ensure the screen remains "still" during swipes as requested.
 
   const panResponder = useMemo(
     () =>
@@ -676,10 +669,10 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
         onStartShouldSetPanResponder: () => false,
         onMoveShouldSetPanResponder: (_, gestureState) => {
           if (isCookingPaused) return false;
-          // Only respond to horizontal swipes, allow vertical scrolling
+          // Only respond to intentional horizontal swipes
           return (
-            Math.abs(gestureState.dx) > Math.abs(gestureState.dy) &&
-            Math.abs(gestureState.dx) > 10
+            Math.abs(gestureState.dx) > Math.abs(gestureState.dy) * 2 &&
+            Math.abs(gestureState.dx) > 30
           );
         },
         onPanResponderGrant: () => {
@@ -687,34 +680,19 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
         },
         onPanResponderMove: (_, gestureState) => {
           if (isCookingPaused) return;
-
-          const { dx, dy } = gestureState;
-          // Only allow horizontal swipes - if vertical movement is greater, don't interfere
-          if (Math.abs(dx) > Math.abs(dy) && Math.abs(dx) > 15) {
-            const maxTranslate = SCREEN_WIDTH * 0.3; // 30% overscroll resistance
-            const clampedDx = Math.max(
-              -maxTranslate,
-              Math.min(maxTranslate, dx)
-            );
-            translateX.value = clampedDx;
-          } else {
-            // Allow vertical scrolling by not interfering
-            return;
-          }
+          // We no longer update translateX.value here to keep the screen "still"
+          // but we still allow the responder to stay active if it's a horizontal intent
         },
         onPanResponderRelease: (_, gestureState) => {
-          if (isCookingPaused) {
-            translateX.value = withSpring(0, { damping: 20 });
-            isSwiping.value = false;
-            return;
-          }
+          isSwiping.value = false;
+          if (isCookingPaused) return;
 
           const { dx, dy, vx } = gestureState;
 
-          // Horizontal swipe detection
-          if (Math.abs(dx) > Math.abs(dy)) {
+          // Horizontal swipe detection for navigation
+          if (Math.abs(dx) > Math.abs(dy) * 1.5) {
             const shouldNavigate =
-              Math.abs(dx) > swipeThreshold || Math.abs(vx) > 0.5;
+              Math.abs(dx) > swipeThreshold || Math.abs(vx) > 0.6;
 
             if (shouldNavigate) {
               if (dx > 0) {
@@ -722,14 +700,6 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
                 if (currentStepIndex > 0) {
                   Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
                   handlePrevious();
-                } else {
-                  // Overscroll at boundary - reduced resistance
-                  translateX.value = withSpring(SCREEN_WIDTH * 0.1, {
-                    damping: 20,
-                  });
-                  setTimeout(() => {
-                    translateX.value = withSpring(0, { damping: 20 });
-                  }, 200);
                 }
               } else {
                 // Swipe left - Next
@@ -738,26 +708,10 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
                 if (currentStepIndex < instructionsLength - 1) {
                   Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
                   handleNext();
-                } else {
-                  // Overscroll at boundary - reduced resistance
-                  translateX.value = withSpring(-SCREEN_WIDTH * 0.1, {
-                    damping: 20,
-                  });
-                  setTimeout(() => {
-                    translateX.value = withSpring(0, { damping: 20 });
-                  }, 200);
                 }
               }
-            } else {
-              // Spring back if threshold not met
-              translateX.value = withSpring(0, { damping: 20 });
             }
-          } else {
-            // Spring back for vertical swipes
-            translateX.value = withSpring(0, { damping: 20 });
           }
-
-          isSwiping.value = false;
         },
       }),
     [
@@ -869,9 +823,8 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
       // Generate ingredient ID similar to mapper
       const quantityStr =
         ingredient.quantity !== null
-          ? `${ingredient.quantity}${
-              ingredient.unit ? ` ${ingredient.unit}` : ""
-            }`
+          ? `${ingredient.quantity}${ingredient.unit ? ` ${ingredient.unit}` : ""
+          }`
           : ingredient.unit || "";
       const ingredientId = `ing-${ingredient.name
         .toLowerCase()
@@ -937,12 +890,12 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
       }
 
       setIsLoading(false);
-      
+
       const store = useCookingStore.getState();
       const isResuming = store.recipe && store.recipe.title === (recipe as RecipeData).name;
       const initialSteps = isResuming ? store.completedSteps : [];
       const initialStep = isResuming ? store.currentStepIndex : 0;
-      
+
       setCompletedSteps(initialSteps);
       startStep(initialStep);
     } else {
@@ -1256,16 +1209,16 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
   // Calculate overall recipe progress
   const overallProgress = useMemo(() => {
     if (processedInstructions.length === 0) return 0;
-    
+
     // Calculate progress based on current index
     // This ensures the progress bar stays in sync with the step counter (e.g., 1/10 = 10%)
     const progress = ((currentStepIndex + 1) / processedInstructions.length) * 100;
-    
+
     // If we've completed the last step, ensure it stays at 100%
     if (currentStepIndex === processedInstructions.length - 1 && isStepComplete) {
       return 100;
     }
-    
+
     return progress;
   }, [
     currentStepIndex,
@@ -1393,6 +1346,8 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
     getDurationInSeconds,
   ]);
 
+  const audioRequestId = useRef(0);
+
   // TTS Functions
   const stopAudio = useCallback(async () => {
     try {
@@ -1408,25 +1363,37 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
   }, []);
 
   const playStepAudio = useCallback(async (text: string) => {
+    // Increment ID to cancel any previous pending operations
+    const requestId = ++audioRequestId.current;
+
     try {
-      // transform "1/2 cup" to "one half cup" for better speech if needed, 
-      // but Google TTS is usually smart enough.
-      
       // Stop previous audio
       await stopAudio();
+      
+      if (requestId !== audioRequestId.current) return;
 
       if (!text) return;
 
       setIsPlaying(true);
       const audioUri = await synthesizeSpeech(text);
+      
+      // Check if this request is still valid after async operation
+      if (requestId !== audioRequestId.current) return;
 
       if (audioUri) {
         const { sound } = await Audio.Sound.createAsync(
           { uri: audioUri },
           { shouldPlay: true }
         );
-        soundRef.current = sound;
         
+        // Final check before assigning/playing
+        if (requestId !== audioRequestId.current) {
+             await sound.unloadAsync();
+             return;
+        }
+
+        soundRef.current = sound;
+
         sound.setOnPlaybackStatusUpdate((status) => {
           if (status.isLoaded && status.didJustFinish) {
             setIsPlaying(false);
@@ -1453,19 +1420,35 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
           // Mark as spoken
           spokenStepsRef.current.add(currentStepIndex);
         }, 500);
-        return () => clearTimeout(timer);
+        
+        // Cleanup function handles interruption
+        return () => {
+             clearTimeout(timer);
+             // Verify we should definitely stop audio when switching steps
+             stopAudio();
+             // Invalidate any pending loads from this step
+             audioRequestId.current++;
+        };
       }
     } else {
       stopAudio();
     }
-  }, [currentStepIndex, isTTSEnabled, isGlobalPaused, isLoading, currentStep, isCompleted]);
+  }, [currentStepIndex, isTTSEnabled, isGlobalPaused, isLoading, currentStep, isCompleted, stopAudio, playStepAudio]);
 
   // Cleanup audio on unmount
   useEffect(() => {
     return () => {
       stopAudio();
+      audioRequestId.current++;
     };
   }, []);
+
+  // Handle add 1 minute
+  const handleAddMinute = useCallback(() => {
+    if (currentStepTimer) {
+      adjustTimer(currentStepTimer.id, 60);
+    }
+  }, [currentStepTimer, adjustTimer]);
 
   // Voice Command Handler (Deterministic Engine)
   const handleVoiceCommand = useCallback((transcript: string) => {
@@ -1480,20 +1463,98 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
 
     console.log("[Voice] Received:", text);
 
+    // special regex check for "step X" commands
+    const stepMatch = text.match(/(?:go to |jump to |move to )?step\s+(\w+|\d+)/);
+    if (stepMatch) {
+      let stepNum = parseInt(stepMatch[1], 10);
+      
+      // Handle word numbers (limiting to common recipe step counts)
+      if (isNaN(stepNum)) {
+        const wordMap: {[key: string]: number} = {
+          "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10,
+          "eleven": 11, "twelve": 12, "thirteen": 13, "fourteen": 14, "fifteen": 15, "twenty": 20
+        };
+        stepNum = wordMap[stepMatch[1]] || 0;
+      }
+      
+      const totalSteps = recipeData?.processedInstructions?.length || 0;
+      
+      if (stepNum > 0 && stepNum <= totalSteps) {
+         lastCommandRef.current = now;
+         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+         Voice.stop().catch(e => console.log("Voice stop error:", e));
+         setPartialTranscript("");
+         
+         // Convert to 0-based index
+         startStep(stepNum - 1);
+         return true;
+      }
+    }
+
     const commands = [
+      {
+        match: ["go to timer", "jump to timer", "show timer", "where is the timer"],
+        action: () => {
+          // Find the first running timer
+          const runningTimer = timers.find(t => t.isRunning && !t.isComplete);
+          if (runningTimer) {
+             const stepIdMatch = runningTimer.stepId.match(/step-(\d+)/);
+             if (stepIdMatch) {
+               const stepIndex = parseInt(stepIdMatch[1], 10);
+               startStep(stepIndex);
+             }
+          }
+        }
+      },
       { match: ["next step", "next", "continue", "forward", "ready"], action: () => goToNextStep() },
       { match: ["back", "previous", "go back", "previous step"], action: () => goToPreviousStep() },
-      { match: ["pause", "stop", "pause timer"], action: () => {
+      {
+        match: ["pause", "stop", "pause timer"], action: () => {
           if (currentStepTimer?.isRunning) {
             pauseStoreTimer(currentStepTimer.id);
             setIsPaused(true);
           }
-      }},
-      { match: ["start timer", "begin", "start", "resume"], action: () => handleStartTimer() },
-      { match: ["repeat", "say again", "repeat instruction"], action: () => {
+        }
+      },
+      {
+        match: ["restart", "restart timer", "reset timer"], action: () => {
+          if (currentStepTimer) {
+             resetStoreTimer(currentStepTimer.id);
+             Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+          }
+        }
+      },
+      {
+        match: ["break", "kitchen break", "take a break", "pause cooking", "hold on"],
+        action: () => {
+             if (!isGlobalPaused) {
+                 toggleGlobalPause();
+                 Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+             }
+        }
+      },
+      { 
+        match: ["resume", "resume cooking", "resume timer", "continue timer", "continue", "back to cooking"], action: () => {
+          // If global pause is active, resume cooking
+          if (isGlobalPaused) {
+              toggleGlobalPause();
+              Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+              return;
+          }
+          
+          // If timer is paused, this will resume it (handleStartTimer toggles)
+          if (currentStepTimer && !currentStepTimer.isRunning && !currentStepTimer.isComplete) {
+            handleStartTimer();
+          }
+        }
+      },
+      { match: ["start timer", "begin", "start"], action: () => handleStartTimer() },
+      {
+        match: ["repeat", "say again", "repeat instruction"], action: () => {
           const textToRead = currentStep.speech || currentStep.action;
           playStepAudio(textToRead);
-      }},
+        }
+      },
       { match: ["add one minute", "add 1 minute", "minute extra"], action: () => handleAddMinute() },
     ];
 
@@ -1501,17 +1562,17 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
       if (cmd.match.some(m => text.includes(m))) {
         lastCommandRef.current = now; // Set cooldown
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-        
+
         // Stop recognition immediately and clear transcript to avoid race conditions
         Voice.stop().catch(e => console.log("Voice stop error:", e));
         setPartialTranscript("");
-        
+
         cmd.action();
         return true;
       }
     }
     return false;
-  }, [goToNextStep, goToPreviousStep, currentStepTimer, pauseStoreTimer, handleStartTimer, currentStep, playStepAudio, handleAddMinute]);
+  }, [goToNextStep, goToPreviousStep, currentStepTimer, pauseStoreTimer, handleStartTimer, currentStep, playStepAudio, handleAddMinute, startStep, recipeData]);
 
   // Keep Ref in sync for listeners to stay stable
   useEffect(() => {
@@ -1521,7 +1582,7 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
   // Stable Voice Recognition Listeners
   useEffect(() => {
     if (!isVoiceEnabled) {
-      Voice.stop().catch(() => {});
+      Voice.stop().catch(() => { });
       return;
     }
 
@@ -1538,7 +1599,7 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
     };
 
     Voice.onSpeechStart = () => setIsListening(true);
-    
+
     Voice.onSpeechEnd = () => {
       setIsListening(false);
       if (isVoiceEnabled) {
@@ -1583,12 +1644,7 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
 
 
 
-  // Handle add 1 minute
-  const handleAddMinute = useCallback(() => {
-    if (currentStepTimer) {
-      adjustTimer(currentStepTimer.id, 60);
-    }
-  }, [currentStepTimer, adjustTimer]);
+
 
   // Handle exit with confirmation
   const handleExit = useCallback(() => {
@@ -1601,7 +1657,8 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
     if (keepAwakeActive) {
       deactivateKeepAwake();
     }
-    router.back();
+    // Go to the cook tab session instead of back to ingredients
+    router.replace("/cook");
   }, [keepAwakeActive, router, stopAudio]);
 
   // Get shortened recipe title
@@ -1671,7 +1728,6 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
   return (
     <Animated.View
       className="flex-1 bg-neutral-950"
-      style={swipeAnimatedStyle}
       {...panResponder.panHandlers}
     >
       <SafeAreaView className="flex-1" edges={["top"]}>
@@ -1715,9 +1771,8 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
                 Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
                 toggleGlobalPause();
               }}
-              className={`w-10 h-10 rounded-full items-center justify-center active:opacity-70 ${
-                isGlobalPaused ? "bg-amber-500" : "bg-neutral-800/80"
-              }`}
+              className={`w-10 h-10 rounded-full items-center justify-center active:opacity-70 ${isGlobalPaused ? "bg-amber-500" : "bg-neutral-800/80"
+                }`}
             >
               {isGlobalPaused ? (
                 <Play size={20} color="#000000" fill="#000000" />
@@ -1768,18 +1823,18 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
 
         {/* Active Timers Strip */}
         {activeTimers.length > 0 && (
-          <Animated.View 
+          <Animated.View
             entering={FadeInUp.duration(300)}
-            className="px-4 pb-3 flex-row flex-wrap gap-2"
+            className="px-4 pb-2 flex-row flex-wrap gap-2"
           >
             {activeTimers.map((timer) => {
               const stepIdx = processedInstructions.findIndex((_, idx) => `step-${idx}` === timer.stepId);
               const isCurrentStep = stepIdx === currentStepIndex;
-              
+
               return (
                 <MotiView
                   key={`timer-moti-${timer.id}`}
-                  animate={{ 
+                  animate={{
                     scale: isCurrentStep ? [1, 1.06, 1] : 1,
                     opacity: isCurrentStep ? 1 : 0.8,
                     shadowOpacity: isCurrentStep ? [0, 0.8, 0] : 0,
@@ -1802,16 +1857,14 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
                         startStep(stepIdx);
                       }
                     }}
-                    className={`flex-row items-center border rounded-full px-4 py-2 ${
-                      isCurrentStep 
-                        ? "bg-amber-500 border-amber-600" 
+                    className={`flex-row items-center border rounded-full px-4 py-2 ${isCurrentStep
+                        ? "bg-amber-500 border-amber-600"
                         : "bg-amber-500/10 border-amber-500/30"
-                    }`}
+                      }`}
                   >
                     <Timer size={18} color={isCurrentStep ? "#000000" : "#f59e0b"} />
-                    <Text className={`font-bold ml-2 ${
-                      isCurrentStep ? "text-black text-base" : "text-amber-500 text-sm"
-                    }`}>
+                    <Text className={`font-bold ml-2 ${isCurrentStep ? "text-black text-base" : "text-amber-500 text-sm"
+                      }`}>
                       {stepIdx !== -1 ? `Step ${stepIdx + 1}: ` : ""}{formatTime(timer.remainingSeconds)}
                     </Text>
                   </Pressable>
@@ -1834,13 +1887,12 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
                   Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
                   startStep(index);
                 }}
-                className={`${
-                  isCurrent
+                className={`${isCurrent
                     ? "w-8 h-2 bg-amber-500 rounded-full"
                     : isCompleted
-                    ? "w-2 h-2 bg-amber-500/50 rounded-full"
-                    : "w-2 h-2 bg-neutral-700 rounded-full"
-                }`}
+                      ? "w-2 h-2 bg-amber-500/50 rounded-full"
+                      : "w-2 h-2 bg-neutral-700 rounded-full"
+                  }`}
               />
             );
           })}
@@ -1916,7 +1968,7 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
               {currentStep.ingredients &&
                 currentStep.ingredients.length > 0 && (
                   <View className="bg-neutral-800/40 rounded-lg px-4 py-3 mb-4">
-                    <View className="flex-row items-center mb-2">
+                    <View className="flex-row items-center mb-2 gap-1">
                       <ListChecks size={16} color="#ffa500" className="mr-2" />
                       <Text className="text-amber-400 text-sm font-semibold uppercase tracking-wide">
                         Ingredients Needed
@@ -1938,9 +1990,8 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
                               ? ingredient.quantity * scaleFactor
                               : null;
                           const quantityText = scaledQuantity
-                            ? `${formatQuantity(scaledQuantity)}${
-                                ingredient.unit ? ` ${ingredient.unit}` : ""
-                              }`
+                            ? `${formatQuantity(scaledQuantity)}${ingredient.unit ? ` ${ingredient.unit}` : ""
+                            }`
                             : ingredient.unit || "";
 
                           return (
@@ -1966,7 +2017,7 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
               {/* Equipment Needed for This Step */}
               {currentStep.equipment && currentStep.equipment.length > 0 && (
                 <View className="bg-neutral-800/40 rounded-lg px-4 py-3 mb-4">
-                  <View className="flex-row items-center mb-2">
+                  <View className="flex-row items-center mb-2 gap-1">
                     <Wrench size={16} color="#60a5fa" className="mr-2" />
                     <Text className="text-blue-400 text-sm font-semibold uppercase tracking-wide">
                       Equipment Needed
@@ -1995,16 +2046,16 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
                     {currentStep.temperature}°
                     {currentStep.temperatureUnit || "F"}
                     {currentStep.temperatureUnit === "C" &&
-                    currentStep.temperature
+                      currentStep.temperature
                       ? ` / ${Math.round(
-                          (currentStep.temperature * 9) / 5 + 32
-                        )}°F`
+                        (currentStep.temperature * 9) / 5 + 32
+                      )}°F`
                       : currentStep.temperatureUnit === "F" &&
                         currentStep.temperature
-                      ? ` / ${Math.round(
+                        ? ` / ${Math.round(
                           ((currentStep.temperature - 32) * 5) / 9
                         )}°C`
-                      : ""}
+                        : ""}
                   </Text>
                 </View>
               )}
@@ -2051,54 +2102,79 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
                     shadowRadius: 10,
                   }}
                 >
-                  <Pressable
-                    onPress={handleStartTimer}
-                    className={`rounded-2xl px-6 py-4 mt-2 ${
-                      isTimerComplete 
-                        ? "bg-green-500" 
-                        : isTimerRunning 
-                          ? "bg-neutral-800 border border-amber-500/50" 
-                          : "bg-amber-500"
-                    } active:opacity-80`}
-                    onPressIn={() =>
-                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium)
-                    }
-                  >
-                    <View className="flex-row items-center justify-center">
-                      {isTimerComplete ? (
-                        <CheckCircle2 size={22} color="#000000" className="mr-2" />
-                      ) : isTimerRunning ? (
-                        <Pause
-                          size={22}
-                          color="#ffffff"
-                          className="mr-2"
-                        />
-                      ) : (
-                        <Timer
-                          size={22}
-                          color="#000000"
-                          className="mr-2"
-                        />
-                      )}
-                      <Text
-                        className={`text-lg font-semibold ${
-                          isTimerComplete
-                            ? "text-black"
-                            : isTimerRunning
-                            ? "text-neutral-300"
-                            : "text-black"
-                        }`}
+                  {currentStepTimer && !isTimerRunning && !isTimerComplete && currentStepTimer.remainingSeconds < currentStepTimer.totalSeconds ? (
+                    <View className="flex-row gap-3 mt-2">
+                       {/* Resume Button */}
+                       <Pressable
+                        onPress={handleStartTimer}
+                        className="flex-1 bg-amber-500 rounded-2xl px-4 py-4 active:opacity-80 items-center justify-center flex-row"
+                        onPressIn={() => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium)}
                       >
-                        {isTimerComplete
-                          ? "Timer Completed - Tap to Restart"
-                          : isTimerRunning
-                          ? `${formatTime(timeRemaining || 0)} Remaining`
-                          : `Start ${formatTime(
-                              getDurationInSeconds(currentStep) || 0
-                            )} Timer`}
-                      </Text>
+                        <Play size={22} color="#000000" fill="#000000" className="mr-2" />
+                        <Text className="text-black text-lg font-bold">
+                          Resume ({formatTime(currentStepTimer.remainingSeconds)})
+                        </Text>
+                      </Pressable>
+
+                      {/* Restart Button */}
+                      <Pressable
+                        onPress={() => {
+                          if (currentStepTimer) resetStoreTimer(currentStepTimer.id);
+                        }}
+                        className="bg-neutral-800 border border-neutral-700 rounded-2xl px-4 py-4 active:bg-neutral-700 items-center justify-center"
+                        onPressIn={() => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium)}
+                      >
+                         <RotateCcw size={22} color="#ffffff" />
+                      </Pressable>
                     </View>
-                  </Pressable>
+                  ) : (
+                    <Pressable
+                      onPress={handleStartTimer}
+                      className={`rounded-2xl px-6 py-4 mt-2 ${isTimerComplete
+                          ? "bg-green-500"
+                          : isTimerRunning
+                            ? "bg-neutral-800 border border-amber-500/50"
+                            : "bg-amber-500"
+                        } active:opacity-80`}
+                      onPressIn={() =>
+                        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium)
+                      }
+                    >
+                      <View className="flex-row items-center justify-center">
+                        {isTimerComplete ? (
+                          <CheckCircle2 size={22} color="#000000" className="mr-2" />
+                        ) : isTimerRunning ? (
+                          <Pause
+                            size={22}
+                            color="#ffffff"
+                            className="mr-2"
+                          />
+                        ) : (
+                          <Timer
+                            size={22}
+                            color="#000000"
+                            className="mr-2"
+                          />
+                        )}
+                        <Text
+                          className={`text-lg font-semibold ${isTimerComplete
+                              ? "text-black"
+                              : isTimerRunning
+                                ? "text-neutral-300"
+                                : "text-black"
+                            }`}
+                        >
+                          {isTimerComplete
+                            ? "Timer Completed - Tap to Restart"
+                            : isTimerRunning
+                              ? `${formatTime(timeRemaining || 0)} Remaining`
+                              : `Start ${formatTime(
+                                getDurationInSeconds(currentStep) || 0
+                              )} Timer`}
+                        </Text>
+                      </View>
+                    </Pressable>
+                  )}
                 </MotiView>
               )}
             </View>
@@ -2195,9 +2271,8 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
             <Pressable
               onPress={handlePrevious}
               disabled={currentStepIndex === 0}
-              className={`w-14 h-14 rounded-full items-center justify-center ${
-                currentStepIndex === 0 ? "bg-neutral-800/50" : "bg-neutral-700"
-              } active:opacity-70`}
+              className={`w-14 h-14 rounded-full items-center justify-center ${currentStepIndex === 0 ? "bg-neutral-800/50" : "bg-neutral-700"
+                } active:opacity-70`}
               onPressIn={() =>
                 Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
               }
@@ -2209,12 +2284,11 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
             </Pressable>
             <Pressable
               onPress={handleNext}
-              className={`h-14 px-8 rounded-full items-center justify-center flex-row ${
-                currentStepIndex ===
-                (recipeData?.processedInstructions?.length || 1) - 1
+              className={`h-14 px-8 rounded-full items-center justify-center flex-row ${currentStepIndex ===
+                  (recipeData?.processedInstructions?.length || 1) - 1
                   ? "bg-green-500"
                   : "bg-amber-500"
-              } active:opacity-80`}
+                } active:opacity-80`}
               onPressIn={() => {
                 if (
                   currentStepIndex ===
@@ -2230,16 +2304,16 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
             >
               <Text className="text-black font-bold text-lg">
                 {currentStepIndex ===
-                (recipeData?.processedInstructions?.length || 1) - 1
+                  (recipeData?.processedInstructions?.length || 1) - 1
                   ? "Done!"
-                  : currentStep?.canDoNextStepInParallel 
-                    ? "Next (Ready Now)" 
+                  : currentStep?.canDoNextStepInParallel
+                    ? "Next (Ready Now)"
                     : "Next"}
               </Text>
               {currentStepIndex !==
                 (recipeData?.processedInstructions?.length || 1) - 1 && (
-                <ChevronRight size={24} color="#000000" className="ml-1" />
-              )}
+                  <ChevronRight size={24} color="#000000" className="ml-1" />
+                )}
             </Pressable>
           </View>
         </View>
@@ -2263,11 +2337,11 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
                 <View className="w-24 h-24 rounded-full bg-amber-500/10 items-center justify-center mb-6 border border-amber-500/20">
                   <Coffee size={48} color="#f59e0b" />
                 </View>
-                
+
                 <Text className="text-white text-3xl font-bold text-center mb-4">
                   Kitchen Break
                 </Text>
-                
+
                 <Text className="text-neutral-400 text-lg text-center leading-relaxed mb-10 px-4">
                   "No stress. I’ve caught your place."{"\n"}
                   All timers and background guides are paused while you handle real life.
@@ -2288,499 +2362,491 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
       </SafeAreaView>
 
       {/* Modals */}
-      {/* Exit Confirmation Modal */}
-      <Modal
-        visible={showExitConfirm}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setShowExitConfirm(false)}
-      >
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
-            <Text style={styles.modalTitle}>Exit Cooking Mode?</Text>
-            <Text style={styles.modalText}>
-              Are you sure you want to leave? Your progress will be saved.
-            </Text>
-            <View style={styles.modalButtons}>
+      {/* Exit Confirmation Overlay */}
+      {showExitConfirm && (
+        <Animated.View
+          entering={FadeIn}
+          exiting={FadeOut}
+          style={[StyleSheet.absoluteFill, { zIndex: 100, backgroundColor: 'rgba(0,0,0,0.7)' }]}
+        >
+          <View style={styles.modalOverlay}>
+            <View style={styles.modalContent}>
+              <Text style={styles.modalTitle}>Exit Cooking Mode?</Text>
+              <Text style={styles.modalText}>
+                Are you sure you want to leave? Your progress will be saved.
+              </Text>
+              <View style={styles.modalButtons}>
+                <Pressable
+                  onPress={() => setShowExitConfirm(false)}
+                  style={[styles.modalButton, styles.modalButtonCancel]}
+                >
+                  <Text style={styles.modalButtonText}>Cancel</Text>
+                </Pressable>
+                <Pressable
+                  onPress={confirmExit}
+                  style={[styles.modalButton, styles.modalButtonConfirm]}
+                >
+                  <Text style={styles.modalButtonConfirmText}>Exit</Text>
+                </Pressable>
+              </View>
+            </View>
+          </View>
+        </Animated.View>
+      )}
+
+      {/* Glossary Overlay */}
+      {glossaryTerm !== null && (
+        <Animated.View
+          entering={FadeIn}
+          exiting={FadeOut}
+          style={[StyleSheet.absoluteFill, { zIndex: 101, backgroundColor: 'rgba(0,0,0,0.7)' }]}
+        >
+          <View style={styles.modalOverlay}>
+            <View style={styles.modalContent}>
+              <Text style={styles.modalTitle}>
+                {glossaryTerm &&
+                  glossaryTerm.charAt(0).toUpperCase() + glossaryTerm.slice(1)}
+              </Text>
+              <Text style={styles.modalText}>
+                {glossaryTerm && glossaryTerms[glossaryTerm]}
+              </Text>
               <Pressable
-                onPress={() => setShowExitConfirm(false)}
-                style={[styles.modalButton, styles.modalButtonCancel]}
-              >
-                <Text style={styles.modalButtonText}>Cancel</Text>
-              </Pressable>
-              <Pressable
-                onPress={confirmExit}
+                onPress={() => setGlossaryTerm(null)}
                 style={[styles.modalButton, styles.modalButtonConfirm]}
               >
-                <Text style={styles.modalButtonConfirmText}>Exit</Text>
+                <Text style={styles.modalButtonConfirmText}>Got it</Text>
               </Pressable>
             </View>
           </View>
-        </View>
-      </Modal>
+        </Animated.View>
+      )}
 
-      {/* Glossary Modal */}
-      <Modal
-        visible={glossaryTerm !== null}
-        transparent
-        animationType="slide"
-        onRequestClose={() => setGlossaryTerm(null)}
-      >
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
-            <Text style={styles.modalTitle}>
-              {glossaryTerm &&
-                glossaryTerm.charAt(0).toUpperCase() + glossaryTerm.slice(1)}
-            </Text>
-            <Text style={styles.modalText}>
-              {glossaryTerm && glossaryTerms[glossaryTerm]}
-            </Text>
-            <Pressable
-              onPress={() => setGlossaryTerm(null)}
-              style={[styles.modalButton, styles.modalButtonConfirm]}
-            >
-              <Text style={styles.modalButtonConfirmText}>Got it</Text>
-            </Pressable>
-          </View>
-        </View>
-      </Modal>
-
-      {/* Ingredients Checklist Modal */}
-      <Modal
-        visible={showIngredientsModal}
-        animationType="slide"
-        presentationStyle="pageSheet"
-        onRequestClose={() => setShowIngredientsModal(false)}
-      >
-        <SafeAreaView
-          className="flex-1 bg-neutral-950"
-          edges={["top", "bottom"]}
+      {/* Ingredients Checklist Overlay */}
+      {showIngredientsModal && (
+        <Animated.View
+          entering={SlideInDown}
+          exiting={SlideOutDown}
+          style={[StyleSheet.absoluteFill, { zIndex: 102 }]}
         >
-          <View className="flex-1">
-            {/* Header */}
-            <View className="flex-row items-center justify-between px-4 py-4 border-b border-neutral-800">
-              <Text className="text-white text-xl font-bold">Ingredients</Text>
-              <Pressable
-                onPress={() => setShowIngredientsModal(false)}
-                className="px-4 py-2"
-              >
-                <Text className="text-amber-500 font-semibold">Done</Text>
-              </Pressable>
-            </View>
+          <SafeAreaView
+            className="flex-1 bg-neutral-950"
+            edges={["top", "bottom"]}
+          >
+            <View className="flex-1">
+              {/* Header */}
+              <View className="flex-row items-center justify-between px-4 py-4 border-b border-neutral-800">
+                <Text className="text-white text-xl font-bold">Ingredients</Text>
+                <Pressable
+                  onPress={() => setShowIngredientsModal(false)}
+                  className="px-4 py-2"
+                >
+                  <Text className="text-amber-500 font-semibold">Done</Text>
+                </Pressable>
+              </View>
 
-            {/* Content */}
-            <ScrollView className="flex-1 px-4 py-4">
-              {/* Needed Now Section */}
-              {currentStep?.ingredients &&
-                currentStep.ingredients.length > 0 && (
-                  <View className="mb-6">
-                    <Text className="text-amber-400 text-sm font-medium uppercase tracking-wide mb-3">
-                      Needed Now
-                    </Text>
-                    {currentStep.ingredients
-                      .filter((ing) => {
-                        if (!ing || !ing.name) return false;
-                        return !isInstructionLike(ing.name);
-                      })
-                      .map((ingredient, index) => {
-                        const scaleFactor =
-                          originalServings > 0
-                            ? currentServings / originalServings
-                            : 1;
-                        const scaledQuantity =
-                          ingredient.quantity !== null
-                            ? ingredient.quantity * scaleFactor
-                            : null;
-                        const ingredientId = `ing-${ingredient.name
-                          .toLowerCase()
-                          .replace(/\s+/g, "-")}-${
-                          scaledQuantity || ingredient.unit || ""
-                        }`;
-                        const isUsed = usedIngredientIds.includes(ingredientId);
+              {/* Content */}
+              <ScrollView className="flex-1 px-4 py-4">
+                {/* Needed Now Section */}
+                {currentStep?.ingredients &&
+                  currentStep.ingredients.length > 0 && (
+                    <View className="mb-6">
+                      <Text className="text-amber-400 text-sm font-medium uppercase tracking-wide mb-3">
+                        Needed Now
+                      </Text>
+                      {currentStep.ingredients
+                        .filter((ing) => {
+                          if (!ing || !ing.name) return false;
+                          return !isInstructionLike(ing.name);
+                        })
+                        .map((ingredient, index) => {
+                          const scaleFactor =
+                            originalServings > 0
+                              ? currentServings / originalServings
+                              : 1;
+                          const scaledQuantity =
+                            ingredient.quantity !== null
+                              ? ingredient.quantity * scaleFactor
+                              : null;
+                          const ingredientId = `ing-${ingredient.name
+                            .toLowerCase()
+                            .replace(/\s+/g, "-")}-${scaledQuantity || ingredient.unit || ""
+                            }`;
+                          const isUsed = usedIngredientIds.includes(ingredientId);
 
-                        return (
-                          <Pressable
-                            key={`ing-now-${index}`}
-                            onPress={() => toggleIngredient(ingredientId)}
-                            className={`flex-row items-center px-4 py-3 rounded-xl mb-2 ${
-                              isUsed ? "bg-green-500/10" : "bg-neutral-800/50"
-                            }`}
-                          >
-                            <View
-                              className={`w-6 h-6 rounded-full border-2 items-center justify-center mr-3 ${
-                                isUsed
-                                  ? "bg-green-500 border-green-500"
-                                  : "border-neutral-600"
-                              }`}
+                          return (
+                            <Pressable
+                              key={`ing-now-${index}`}
+                              onPress={() => toggleIngredient(ingredientId)}
+                              className={`flex-row items-center px-4 py-3 rounded-xl mb-2 ${isUsed ? "bg-green-500/10" : "bg-neutral-800/50"
+                                }`}
                             >
-                              {isUsed && (
-                                <CheckCircle2 size={16} color="#ffffff" />
-                              )}
-                            </View>
-                            <View className="flex-1">
-                              <Text
-                                className={`${
-                                  isUsed
-                                    ? "text-neutral-500 line-through"
-                                    : "text-white"
-                                } text-base`}
+                              <View
+                                className={`w-6 h-6 rounded-full border-2 items-center justify-center mr-3 ${isUsed
+                                    ? "bg-green-500 border-green-500"
+                                    : "border-neutral-600"
+                                  }`}
                               >
-                                {ingredient.name}
-                              </Text>
-                              <Text className="text-neutral-400 text-sm">
-                                {scaledQuantity
-                                  ? `${formatQuantity(scaledQuantity)}${
-                                      ingredient.unit
-                                        ? ` ${ingredient.unit}`
-                                        : ""
+                                {isUsed && (
+                                  <CheckCircle2 size={16} color="#ffffff" />
+                                )}
+                              </View>
+                              <View className="flex-1">
+                                <Text
+                                  className={`${isUsed
+                                      ? "text-neutral-500 line-through"
+                                      : "text-white"
+                                    } text-base`}
+                                >
+                                  {ingredient.name}
+                                </Text>
+                                <Text className="text-neutral-400 text-sm">
+                                  {scaledQuantity
+                                    ? `${formatQuantity(scaledQuantity)}${ingredient.unit
+                                      ? ` ${ingredient.unit}`
+                                      : ""
                                     }`
-                                  : ingredient.unit || ""}
-                              </Text>
-                            </View>
-                          </Pressable>
-                        );
-                      })}
+                                    : ingredient.unit || ""}
+                                </Text>
+                              </View>
+                            </Pressable>
+                          );
+                        })}
+                    </View>
+                  )}
+
+                {/* Other Ingredients Section */}
+                {recipeData?.ingredients && recipeData.ingredients.length > 0 && (
+                  <View>
+                    <Text className="text-neutral-500 text-sm font-medium uppercase tracking-wide mb-3">
+                      Other Ingredients
+                    </Text>
+                    {recipeData.ingredients.map((ingredient, index) => {
+                      const ingredientId = `ing-${ingredient
+                        .toLowerCase()
+                        .replace(/\s+/g, "-")}`;
+                      const isUsed = usedIngredientIds.includes(ingredientId);
+
+                      return (
+                        <Pressable
+                          key={`ing-other-${index}`}
+                          onPress={() => toggleIngredient(ingredientId)}
+                          className={`flex-row items-center px-4 py-3 rounded-xl mb-2 ${isUsed ? "bg-green-500/10" : "bg-neutral-800/50"
+                            }`}
+                        >
+                          <View
+                            className={`w-6 h-6 rounded-full border-2 items-center justify-center mr-3 ${isUsed
+                                ? "bg-green-500 border-green-500"
+                                : "border-neutral-600"
+                              }`}
+                          >
+                            {isUsed && <CheckCircle2 size={16} color="#ffffff" />}
+                          </View>
+                          <Text
+                            className={`flex-1 ${isUsed
+                                ? "text-neutral-500 line-through"
+                                : "text-white"
+                              } text-base`}
+                          >
+                            {ingredient}
+                          </Text>
+                        </Pressable>
+                      );
+                    })}
                   </View>
                 )}
+              </ScrollView>
+            </View>
+          </SafeAreaView>
+        </Animated.View>
+      )}
 
-              {/* Other Ingredients Section */}
-              {recipeData?.ingredients && recipeData.ingredients.length > 0 && (
-                <View>
-                  <Text className="text-neutral-500 text-sm font-medium uppercase tracking-wide mb-3">
-                    Other Ingredients
-                  </Text>
-                  {recipeData.ingredients.map((ingredient, index) => {
-                    const ingredientId = `ing-${ingredient
-                      .toLowerCase()
-                      .replace(/\s+/g, "-")}`;
-                    const isUsed = usedIngredientIds.includes(ingredientId);
+      {/* Timers Overlay */}
+      {showTimersModal && (
+        <Animated.View
+          entering={SlideInDown}
+          exiting={SlideOutDown}
+          style={[StyleSheet.absoluteFill, { zIndex: 103 }]}
+        >
+          <SafeAreaView
+            className="flex-1 bg-neutral-950"
+            edges={["top", "bottom"]}
+          >
+            <View className="flex-1">
+              {/* Header */}
+              <View className="flex-row items-center justify-between px-4 py-4 border-b border-neutral-800">
+                <Text className="text-white text-xl font-bold">Timers</Text>
+                <Pressable
+                  onPress={() => setShowTimersModal(false)}
+                  className="px-4 py-2"
+                >
+                  <Text className="text-amber-500 font-semibold">Done</Text>
+                </Pressable>
+              </View>
+
+              {/* Content */}
+              <ScrollView className="flex-1 px-4 py-4">
+                {timers.length === 0 ? (
+                  <View className="items-center justify-center py-12">
+                    <Timer size={48} color="#6b7280" />
+                    <Text className="text-neutral-400 text-base mt-4">
+                      No active timers
+                    </Text>
+                  </View>
+                ) : (
+                  timers.map((timer) => {
+                    const isRunning = timer.isRunning && !timer.isComplete;
+                    const isComplete = timer.isComplete;
+                    const progress =
+                      timer.totalSeconds > 0
+                        ? (timer.remainingSeconds / timer.totalSeconds) * 100
+                        : 0;
 
                     return (
-                      <Pressable
-                        key={`ing-other-${index}`}
-                        onPress={() => toggleIngredient(ingredientId)}
-                        className={`flex-row items-center px-4 py-3 rounded-xl mb-2 ${
-                          isUsed ? "bg-green-500/10" : "bg-neutral-800/50"
-                        }`}
-                      >
-                        <View
-                          className={`w-6 h-6 rounded-full border-2 items-center justify-center mr-3 ${
-                            isUsed
-                              ? "bg-green-500 border-green-500"
-                              : "border-neutral-600"
+                      <View
+                        key={timer.id}
+                        className={`rounded-2xl p-4 mb-4 border ${isComplete
+                            ? "bg-green-500/10 border-green-500/30"
+                            : isRunning
+                              ? "bg-amber-500/10 border-amber-500/30"
+                              : "bg-neutral-800/50 border-neutral-700/50"
                           }`}
-                        >
-                          {isUsed && <CheckCircle2 size={16} color="#ffffff" />}
+                      >
+                        {/* Timer Label */}
+                        <View className="flex-row items-center mb-4">
+                          <Bell
+                            size={20}
+                            color={
+                              isComplete
+                                ? "#22c55e"
+                                : isRunning
+                                  ? "#f59e0b"
+                                  : "#9ca3af"
+                            }
+                            className="mr-2"
+                          />
+                          <Text
+                            className={`text-base font-semibold ${isComplete
+                                ? "text-green-400"
+                                : isRunning
+                                  ? "text-amber-400"
+                                  : "text-white"
+                              }`}
+                          >
+                            {timer.label}
+                          </Text>
                         </View>
+
+                        {/* Timer Display */}
                         <Text
-                          className={`flex-1 ${
-                            isUsed
-                              ? "text-neutral-500 line-through"
-                              : "text-white"
-                          } text-base`}
-                        >
-                          {ingredient}
-                        </Text>
-                      </Pressable>
-                    );
-                  })}
-                </View>
-              )}
-            </ScrollView>
-          </View>
-        </SafeAreaView>
-      </Modal>
-
-      {/* Timers Modal */}
-      <Modal
-        visible={showTimersModal}
-        animationType="slide"
-        presentationStyle="pageSheet"
-        onRequestClose={() => setShowTimersModal(false)}
-      >
-        <SafeAreaView
-          className="flex-1 bg-neutral-950"
-          edges={["top", "bottom"]}
-        >
-          <View className="flex-1">
-            {/* Header */}
-            <View className="flex-row items-center justify-between px-4 py-4 border-b border-neutral-800">
-              <Text className="text-white text-xl font-bold">Timers</Text>
-              <Pressable
-                onPress={() => setShowTimersModal(false)}
-                className="px-4 py-2"
-              >
-                <Text className="text-amber-500 font-semibold">Done</Text>
-              </Pressable>
-            </View>
-
-            {/* Content */}
-            <ScrollView className="flex-1 px-4 py-4">
-              {timers.length === 0 ? (
-                <View className="items-center justify-center py-12">
-                  <Timer size={48} color="#6b7280" />
-                  <Text className="text-neutral-400 text-base mt-4">
-                    No active timers
-                  </Text>
-                </View>
-              ) : (
-                timers.map((timer) => {
-                  const isRunning = timer.isRunning && !timer.isComplete;
-                  const isComplete = timer.isComplete;
-                  const progress =
-                    timer.totalSeconds > 0
-                      ? (timer.remainingSeconds / timer.totalSeconds) * 100
-                      : 0;
-
-                  return (
-                    <View
-                      key={timer.id}
-                      className={`rounded-2xl p-4 mb-4 border ${
-                        isComplete
-                          ? "bg-green-500/10 border-green-500/30"
-                          : isRunning
-                          ? "bg-amber-500/10 border-amber-500/30"
-                          : "bg-neutral-800/50 border-neutral-700/50"
-                      }`}
-                    >
-                      {/* Timer Label */}
-                      <View className="flex-row items-center mb-4">
-                        <Bell
-                          size={20}
-                          color={
-                            isComplete
-                              ? "#22c55e"
-                              : isRunning
-                              ? "#f59e0b"
-                              : "#9ca3af"
-                          }
-                          className="mr-2"
-                        />
-                        <Text
-                          className={`text-base font-semibold ${
-                            isComplete
+                          className={`text-4xl font-mono font-bold text-center mb-4 ${isComplete
                               ? "text-green-400"
                               : isRunning
-                              ? "text-amber-400"
-                              : "text-white"
-                          }`}
+                                ? "text-amber-400"
+                                : "text-white"
+                            }`}
                         >
-                          {timer.label}
+                          {formatTime(timer.remainingSeconds)}
                         </Text>
-                      </View>
 
-                      {/* Timer Display */}
-                      <Text
-                        className={`text-4xl font-mono font-bold text-center mb-4 ${
-                          isComplete
-                            ? "text-green-400"
-                            : isRunning
-                            ? "text-amber-400"
-                            : "text-white"
-                        }`}
-                      >
-                        {formatTime(timer.remainingSeconds)}
-                      </Text>
-
-                      {/* Progress Bar */}
-                      <View className="h-1.5 bg-neutral-700 rounded-full overflow-hidden mb-4">
-                        <View
-                          className={`h-full rounded-full ${
-                            isComplete
-                              ? "bg-green-500"
-                              : isRunning
-                              ? "bg-amber-500"
-                              : "bg-neutral-600"
-                          }`}
-                          style={{ width: `${progress}%` }}
-                        />
-                      </View>
-
-                      {/* Control Buttons */}
-                      <View className="flex-row items-center justify-center gap-4">
-                        {!isComplete && (
-                          <>
-                            <Pressable
-                              onPress={() => {
-                                if (isRunning) {
-                                  pauseStoreTimer(timer.id);
-                                } else {
-                                  startStoreTimer(timer.id);
-                                }
-                              }}
-                              className={`w-16 h-16 rounded-full items-center justify-center ${
-                                isRunning ? "bg-amber-500" : "bg-white"
+                        {/* Progress Bar */}
+                        <View className="h-1.5 bg-neutral-700 rounded-full overflow-hidden mb-4">
+                          <View
+                            className={`h-full rounded-full ${isComplete
+                                ? "bg-green-500"
+                                : isRunning
+                                  ? "bg-amber-500"
+                                  : "bg-neutral-600"
                               }`}
-                            >
-                              {isRunning ? (
-                                <Pause size={24} color="#000000" />
-                              ) : (
-                                <Play size={24} color="#000000" />
-                              )}
-                            </Pressable>
-                            <Pressable
-                              onPress={() => resetStoreTimer(timer.id)}
-                              className="w-12 h-12 bg-neutral-700/50 rounded-full items-center justify-center"
-                            >
-                              <RotateCcw size={20} color="#ffffff" />
-                            </Pressable>
-                          </>
-                        )}
-                        {isComplete && (
-                          <View className="w-16 h-16 bg-green-500/20 rounded-full items-center justify-center">
-                            <Bell size={24} color="#22c55e" />
-                          </View>
-                        )}
-                        <Pressable
-                          onPress={() => removeTimer(timer.id)}
-                          className="w-12 h-12 bg-red-500/20 rounded-full items-center justify-center"
-                        >
-                          <X size={20} color="#ef4444" />
-                        </Pressable>
+                            style={{ width: `${progress}%` }}
+                          />
+                        </View>
+
+                        {/* Control Buttons */}
+                        <View className="flex-row items-center justify-center gap-4">
+                          {!isComplete && (
+                            <>
+                              <Pressable
+                                onPress={() => {
+                                  if (isRunning) {
+                                    pauseStoreTimer(timer.id);
+                                  } else {
+                                    startStoreTimer(timer.id);
+                                  }
+                                }}
+                                className={`w-16 h-16 rounded-full items-center justify-center ${isRunning ? "bg-amber-500" : "bg-white"
+                                  }`}
+                              >
+                                {isRunning ? (
+                                  <Pause size={24} color="#000000" />
+                                ) : (
+                                  <Play size={24} color="#000000" />
+                                )}
+                              </Pressable>
+                              <Pressable
+                                onPress={() => resetStoreTimer(timer.id)}
+                                className="w-12 h-12 bg-neutral-700/50 rounded-full items-center justify-center"
+                              >
+                                <RotateCcw size={20} color="#ffffff" />
+                              </Pressable>
+                            </>
+                          )}
+                          {isComplete && (
+                            <View className="w-16 h-16 bg-green-500/20 rounded-full items-center justify-center">
+                              <Bell size={24} color="#22c55e" />
+                            </View>
+                          )}
+                          <Pressable
+                            onPress={() => removeTimer(timer.id)}
+                            className="w-12 h-12 bg-red-500/20 rounded-full items-center justify-center"
+                          >
+                            <X size={20} color="#ef4444" />
+                          </Pressable>
+                        </View>
                       </View>
+                    );
+                  })
+                )}
+              </ScrollView>
+            </View>
+          </SafeAreaView>
+        </Animated.View>
+      )}
+
+      {/* Completion Overlay */}
+      {showCompletionScreen && (
+        <Animated.View
+          entering={FadeIn}
+          exiting={FadeOut}
+          style={[StyleSheet.absoluteFill, { zIndex: 104 }]}
+        >
+          <View className="flex-1 bg-black/95 items-center justify-center">
+            {/* Confetti Effect */}
+            <View className="absolute inset-0 z-0" pointerEvents="none">
+              <ConfettiCannon
+                count={200}
+                origin={{ x: SCREEN_WIDTH / 2, y: -20 }}
+                fadeOut={true}
+                autoStart={true}
+              />
+            </View>
+
+            <ScrollView
+              className="flex-1 w-full z-10"
+              contentContainerStyle={{
+                alignItems: "center",
+                justifyContent: "center",
+                paddingVertical: 60,
+              }}
+              showsVerticalScrollIndicator={false}
+            >
+              <Animated.View
+                entering={FadeInUp.delay(300).duration(800)}
+                className="items-center w-full px-6"
+              >
+                {/* Success Icon */}
+                <View className="w-40 h-40 rounded-full bg-amber-500/20 items-center justify-center mb-8 border border-amber-500/30">
+                  <View className="w-32 h-32 rounded-full bg-amber-500/40 items-center justify-center shadow-2xl shadow-amber-500/50">
+                    <ChefHat size={64} color="#f59e0b" />
+                  </View>
+                </View>
+
+                {/* Title */}
+                <Text className="text-5xl font-black text-white mb-2 text-center tracking-tight">
+                  Bon Appétit!
+                </Text>
+
+                {/* Success Message */}
+                <Text className="text-xl text-neutral-400 mb-8 text-center font-medium">
+                  You've mastered this recipe! 🥂
+                </Text>
+
+                {/* Cooked Details Card */}
+                <View className="w-full bg-neutral-900/80 border border-neutral-800 rounded-[40px] p-8 mb-10 shadow-2xl">
+                  <Text className="text-amber-500 text-xs font-bold uppercase tracking-[4px] mb-4 text-center">
+                    Cooked Details
+                  </Text>
+                  <Text className="text-2xl font-bold text-white mb-8 text-center">
+                    {recipeData?.name || "Delicious Meal"}
+                  </Text>
+
+                  <View className="flex-row justify-between items-center px-2">
+                    <View className="items-center flex-1">
+                      <View className="w-12 h-12 bg-neutral-800 rounded-2xl items-center justify-center mb-3">
+                        <ListChecks size={24} color="#9ca3af" />
+                      </View>
+                      <Text className="text-2xl font-bold text-white">
+                        {processedInstructions.length}
+                      </Text>
+                      <Text className="text-neutral-500 text-xs font-semibold uppercase">Steps</Text>
                     </View>
-                  );
-                })
-              )}
+
+                    <View className="w-[1px] h-12 bg-neutral-800 mx-4" />
+
+                    <View className="items-center flex-1">
+                      <View className="w-12 h-12 bg-neutral-800 rounded-2xl items-center justify-center mb-3">
+                        <Clock size={24} color="#9ca3af" />
+                      </View>
+                      <Text className="text-2xl font-bold text-white">
+                        {totalTimeMinutes}
+                      </Text>
+                      <Text className="text-neutral-500 text-xs font-semibold uppercase">Minutes</Text>
+                    </View>
+
+                    <View className="w-[1px] h-12 bg-neutral-800 mx-4" />
+
+                    <View className="items-center flex-1">
+                      <View className="w-12 h-12 bg-neutral-800 rounded-2xl items-center justify-center mb-3">
+                        <Utensils size={24} color="#9ca3af" />
+                      </View>
+                      <Text className="text-2xl font-bold text-white">
+                        {recipeData?.ingredients?.length || 0}
+                      </Text>
+                      <Text className="text-neutral-500 text-xs font-semibold uppercase">Items</Text>
+                    </View>
+                  </View>
+                </View>
+
+                {/* Buttons */}
+                <View className="w-full gap-4">
+                  <Pressable
+                    onPress={() => {
+                      setShowCompletionScreen(false);
+                      router.replace("/(tabs)");
+                    }}
+                    className="w-full h-16 bg-amber-500 rounded-3xl items-center justify-center shadow-xl shadow-amber-500/20 active:opacity-90"
+                  >
+                    <Text className="text-black font-black text-lg uppercase tracking-wider">
+                      🏠 Back Home
+                    </Text>
+                  </Pressable>
+
+                  <View className="flex-row gap-4">
+                    <Pressable
+                      onPress={() => {
+                        setShowCompletionScreen(false);
+                        router.replace("/(tabs)/saved");
+                      }}
+                      className="flex-1 h-14 bg-neutral-800 rounded-3xl items-center justify-center border border-neutral-700 active:bg-neutral-700"
+                    >
+                      <Text className="text-white font-bold">📖 Cookbook</Text>
+                    </Pressable>
+                    <Pressable
+                      onPress={() => {
+                        resetSession();
+                        setShowCompletionScreen(false);
+                        startStep(0);
+                      }}
+                      className="flex-1 h-14 bg-neutral-900 rounded-3xl items-center justify-center border border-neutral-800 active:bg-neutral-800"
+                    >
+                      <Text className="text-neutral-400 font-bold">🔄 Start Over</Text>
+                    </Pressable>
+                  </View>
+                </View>
+              </Animated.View>
             </ScrollView>
           </View>
-        </SafeAreaView>
-      </Modal>
-
-      {/* Completion Screen */}
-      <Modal
-        visible={showCompletionScreen}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setShowCompletionScreen(false)}
-      >
-        <View className="flex-1 bg-black/95 items-center justify-center">
-          {/* Confetti Effect */}
-          <View className="absolute inset-0 z-0" pointerEvents="none">
-            <ConfettiCannon
-              count={200}
-              origin={{ x: SCREEN_WIDTH / 2, y: -20 }}
-              fadeOut={true}
-              autoStart={true}
-            />
-          </View>
-
-          <ScrollView
-            className="flex-1 w-full z-10"
-            contentContainerStyle={{
-              alignItems: "center",
-              justifyContent: "center",
-              paddingVertical: 60,
-            }}
-            showsVerticalScrollIndicator={false}
-          >
-            <Animated.View 
-              entering={FadeInUp.delay(300).duration(800)}
-              className="items-center w-full px-6"
-            >
-              {/* Success Icon */}
-              <View className="w-40 h-40 rounded-full bg-amber-500/20 items-center justify-center mb-8 border border-amber-500/30">
-                <View className="w-32 h-32 rounded-full bg-amber-500/40 items-center justify-center shadow-2xl shadow-amber-500/50">
-                  <ChefHat size={64} color="#f59e0b" />
-                </View>
-              </View>
-
-              {/* Title */}
-              <Text className="text-5xl font-black text-white mb-2 text-center tracking-tight">
-                Bon Appétit!
-              </Text>
-
-              {/* Success Message */}
-              <Text className="text-xl text-neutral-400 mb-8 text-center font-medium">
-                You've mastered this recipe! 🥂
-              </Text>
-
-              {/* Cooked Details Card */}
-              <View className="w-full bg-neutral-900/80 border border-neutral-800 rounded-[40px] p-8 mb-10 shadow-2xl">
-                <Text className="text-amber-500 text-xs font-bold uppercase tracking-[4px] mb-4 text-center">
-                  Cooked Details
-                </Text>
-                <Text className="text-2xl font-bold text-white mb-8 text-center">
-                  {recipeData?.name || "Delicious Meal"}
-                </Text>
-
-                <View className="flex-row justify-between items-center px-2">
-                  <View className="items-center flex-1">
-                    <View className="w-12 h-12 bg-neutral-800 rounded-2xl items-center justify-center mb-3">
-                      <ListChecks size={24} color="#9ca3af" />
-                    </View>
-                    <Text className="text-2xl font-bold text-white">
-                      {processedInstructions.length}
-                    </Text>
-                    <Text className="text-neutral-500 text-xs font-semibold uppercase">Steps</Text>
-                  </View>
-
-                  <View className="w-[1px] h-12 bg-neutral-800 mx-4" />
-
-                  <View className="items-center flex-1">
-                    <View className="w-12 h-12 bg-neutral-800 rounded-2xl items-center justify-center mb-3">
-                      <Clock size={24} color="#9ca3af" />
-                    </View>
-                    <Text className="text-2xl font-bold text-white">
-                      {totalTimeMinutes}
-                    </Text>
-                    <Text className="text-neutral-500 text-xs font-semibold uppercase">Minutes</Text>
-                  </View>
-
-                  <View className="w-[1px] h-12 bg-neutral-800 mx-4" />
-
-                  <View className="items-center flex-1">
-                    <View className="w-12 h-12 bg-neutral-800 rounded-2xl items-center justify-center mb-3">
-                      <Utensils size={24} color="#9ca3af" />
-                    </View>
-                    <Text className="text-2xl font-bold text-white">
-                      {recipeData?.ingredients?.length || 0}
-                    </Text>
-                    <Text className="text-neutral-500 text-xs font-semibold uppercase">Items</Text>
-                  </View>
-                </View>
-              </View>
-
-              {/* Buttons */}
-              <View className="w-full gap-4">
-                <Pressable
-                  onPress={() => {
-                    setShowCompletionScreen(false);
-                    router.replace("/(tabs)");
-                  }}
-                  className="w-full h-16 bg-amber-500 rounded-3xl items-center justify-center shadow-xl shadow-amber-500/20 active:opacity-90"
-                >
-                  <Text className="text-black font-black text-lg uppercase tracking-wider">
-                    🏠 Back Home
-                  </Text>
-                </Pressable>
-                
-                <View className="flex-row gap-4">
-                  <Pressable
-                    onPress={() => {
-                      setShowCompletionScreen(false);
-                      router.replace("/(tabs)/saved");
-                    }}
-                    className="flex-1 h-14 bg-neutral-800 rounded-3xl items-center justify-center border border-neutral-700 active:bg-neutral-700"
-                  >
-                    <Text className="text-white font-bold">📖 Cookbook</Text>
-                  </Pressable>
-                  <Pressable
-                    onPress={() => {
-                      resetSession();
-                      setShowCompletionScreen(false);
-                      startStep(0);
-                    }}
-                    className="flex-1 h-14 bg-neutral-900 rounded-3xl items-center justify-center border border-neutral-800 active:bg-neutral-800"
-                  >
-                    <Text className="text-neutral-400 font-bold">🔄 Start Over</Text>
-                  </Pressable>
-                </View>
-              </View>
-            </Animated.View>
-          </ScrollView>
-        </View>
-      </Modal>
+        </Animated.View>
+      )}
     </Animated.View>
   );
 }

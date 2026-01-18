@@ -1,492 +1,289 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import {
   View,
   Text,
-  StyleSheet,
   ScrollView,
   Pressable,
   Image,
   ActivityIndicator,
+  Alert,
 } from "react-native";
-import {
-  SafeAreaView,
-  useSafeAreaInsets,
-} from "react-native-safe-area-context";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useRouter, useLocalSearchParams } from "expo-router";
+import * as Haptics from "expo-haptics";
+import { 
+  ChefHat, 
+  Clock, 
+  Play, 
+  Users, 
+  Heart,
+  ChevronLeft,
+  Sparkles
+} from "lucide-react-native";
+import { recipeApi } from "../features/recipe/recipe.api";
+import { useSavedRecipesStore } from "../stores/useSavedRecipesStore";
+import { cn } from "../lib/cn";
+import { usePaywall } from "../lib/usePaywall";
 
 interface RecipeData {
+  id?: string;
   name: string;
   description?: string;
   image?: string | string[];
   ingredients: string[];
   instructions: string[];
   totalTime?: string;
-  cookTime?: string;
-  prepTime?: string;
   yield?: string | number;
   processedInstructions?: any[];
+  sourceUrl?: string;
 }
-
-const formatDuration = (duration: string): string => {
-  if (!duration) return "";
-  const match = duration.match(/PT(?:(\d+)H)?(?:(\d+)M)?/);
-  if (!match) return duration;
-  const hours = match[1] ? parseInt(match[1]) : 0;
-  const minutes = match[2] ? parseInt(match[2]) : 0;
-  if (hours > 0 && minutes > 0) return `${hours}h ${minutes}m`;
-  if (hours > 0) return `${hours}h`;
-  if (minutes > 0) return `${minutes}m`;
-  return duration;
-};
 
 export default function RecipePreviewScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { recipe } = useLocalSearchParams<{ recipe: string }>();
+  const { isSubscribed, validateCookingSession, checkCanSaveRecipe, showPaywall } = usePaywall();
 
   const [recipeData, setRecipeData] = useState<RecipeData | null>(null);
-  const [image, setImage] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
+  const [isSaved, setIsSaved] = useState(false);
 
   useEffect(() => {
     if (recipe) {
       try {
         const parsed = JSON.parse(recipe);
         setRecipeData(parsed);
-
-        // Handle image
-        if (parsed.image) {
-          if (Array.isArray(parsed.image) && parsed.image.length > 0) {
-            setImage(parsed.image[0]);
-          } else if (typeof parsed.image === "string") {
-            setImage(parsed.image);
-          }
-        }
+        // If it's a saved recipe, it might already have an ID or we can check if it's in the cookbook
+        // For now, we'll assume the parent screen tells us if it's saved if needed, 
+        // or we can just let handleSave handle the duplication check via API
       } catch (error) {
         console.error("Error parsing recipe:", error);
       }
     }
   }, [recipe]);
 
-  const handleStartCooking = () => {
+  const handleSaveRecipe = useCallback(async () => {
+    if (!recipeData || isSaving || isSaved) return;
+
+    // Check saved recipes limit for free users
+    if (!isSubscribed && !checkCanSaveRecipe()) {
+      return; 
+    }
+
+    setIsSaving(true);
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+
+    try {
+      const response = await recipeApi.saveRecipe(recipeData.name, recipeData);
+      if (response.success) {
+        useSavedRecipesStore.getState().addRecipe(response.data);
+      }
+      setIsSaved(true);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    } catch (error: any) {
+      if (error.status === 403) {
+        Alert.alert(
+          "Limit Reached",
+          error.message || "You've reached your saved recipes limit.",
+          [
+            { text: 'Maybe Later', style: 'cancel' },
+            { text: 'Upgrade to Premium', onPress: showPaywall },
+          ]
+        );
+      } else {
+        Alert.alert("Error", "Failed to save recipe. Please try again.");
+      }
+    } finally {
+      setIsSaving(false);
+    }
+  }, [recipeData, isSaving, isSaved, isSubscribed, checkCanSaveRecipe, showPaywall]);
+
+  const handleStartCooking = useCallback(async () => {
     if (!recipeData) return;
 
-    // Navigate to serving size selection screen
-    // Processing will happen there after serving size is selected
-    router.push({
-      pathname: "/serving-size",
-      params: { recipe: JSON.stringify(recipeData) },
-    });
-  };
+    // Check usage limits for free users (Validation Only)
+    if (!isSubscribed) {
+      const canProceed = validateCookingSession();
+      if (!canProceed) return;
+    }
+
+    try {
+      // usage is tracked in the next step (serving-size/process)
+
+      
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+      router.push({
+        pathname: "/serving-size",
+        params: { recipe: JSON.stringify(recipeData) },
+      });
+    } catch (error: any) {
+      console.error("Failed to navigate to serving size:", error);
+    }
+  }, [recipeData, router, isSubscribed, validateCookingSession, showPaywall]);
 
   if (!recipeData) {
     return (
-      <SafeAreaView style={styles.container} edges={["top", "bottom"]}>
-        <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color="#ffa500" />
-          <Text style={styles.loadingText}>Loading recipe...</Text>
-        </View>
-      </SafeAreaView>
+      <View className="flex-1 bg-neutral-950 items-center justify-center">
+        <ActivityIndicator size="large" color="#f59e0b" />
+        <Text className="text-neutral-500 mt-4 font-medium">Loading recipe...</Text>
+      </View>
     );
   }
 
-  return (
-    <SafeAreaView
-      style={styles.container}
-      edges={["top", "left", "right", "bottom"]}
-    >
-      {/* Back Button */}
-      <View style={[styles.topBar]}>
-        <Pressable
-          onPress={() => router.back()}
-          style={({ pressed }) => [
-            styles.backButton,
-            pressed && styles.buttonPressed,
-          ]}
-        >
-          <Text style={styles.backButtonIcon}>←</Text>
-        </Pressable>
-      </View>
+  const recipeImage = Array.isArray(recipeData.image) ? recipeData.image[0] : recipeData.image;
 
-      <View style={styles.contentWrapper}>
-        <ScrollView
-          contentContainerStyle={styles.scrollContent}
-          showsVerticalScrollIndicator={false}
-          style={styles.scrollView}
+  return (
+    <View className="flex-1 bg-neutral-950">
+      <ScrollView
+        className="flex-1"
+        contentContainerStyle={{
+          paddingBottom: insets.bottom + 100,
+        }}
+        showsVerticalScrollIndicator={false}
+      >
+        {/* Header/Back Button */}
+        <View 
+          className="flex-row items-center justify-between px-5 py-4 z-10"
+          style={{ marginTop: insets.top }}
         >
-          {/* Recipe Image */}
-          <View style={styles.imageContainer}>
-            {image ? (
+          <Pressable
+            onPress={() => router.back()}
+            className="w-10 h-10 rounded-full bg-neutral-900/80 items-center justify-center border border-neutral-800"
+          >
+            <ChevronLeft size={24} color="#ffffff" />
+          </Pressable>
+          
+          <Text className="text-white font-bold text-lg opacity-80">Recipe Preview</Text>
+          <View className="w-10" /> 
+        </View>
+
+        <View className="px-5">
+          {recipeImage && (
+            <View className="relative w-full h-64 mb-6 shadow-2xl">
               <Image
-                source={{ uri: image }}
-                style={styles.recipeImage}
+                source={{ uri: recipeImage }}
+                className="w-full h-full rounded-[32px]"
                 resizeMode="cover"
               />
-            ) : (
-              <View style={styles.imagePlaceholder}>
-                <Text style={styles.placeholderIcon}>🍳</Text>
-                <Text style={styles.placeholderText}>No Image</Text>
-              </View>
-            )}
-          </View>
-
-          {/* Recipe Info */}
-          <View style={styles.content}>
-            <Text style={styles.recipeName}>{recipeData.name}</Text>
-
-            {recipeData.description && (
-              <Text style={styles.description}>{recipeData.description}</Text>
-            )}
-
-            {/* Meta Info */}
-            <View style={styles.metaContainer}>
-              {recipeData.totalTime && (
-                <View style={styles.metaItem}>
-                  <Text style={styles.metaIcon}>⏱️</Text>
-                  <Text style={styles.metaText}>
-                    {formatDuration(recipeData.totalTime)}
-                  </Text>
-                </View>
-              )}
-              {recipeData.yield && (
-                <View style={styles.metaItem}>
-                  <Text style={styles.metaIcon}>👥</Text>
-                  <Text style={styles.metaText}>
-                    {recipeData.yield} servings
-                  </Text>
-                </View>
-              )}
-              {recipeData.ingredients && (
-                <View style={styles.metaItem}>
-                  <Text style={styles.metaIcon}>🥄</Text>
-                  <Text style={styles.metaText}>
-                    {recipeData.ingredients.length} ingredients
-                  </Text>
-                </View>
-              )}
-              {recipeData.instructions && (
-                <View style={styles.metaItem}>
-                  <Text style={styles.metaIcon}>📖</Text>
-                  <Text style={styles.metaText}>
-                    {recipeData.instructions.length} steps
-                  </Text>
-                </View>
-              )}
+              <View className="absolute inset-0 rounded-[32px] border border-white/10" />
             </View>
+          )}
 
-            {/* Ingredients Section */}
-            {recipeData.ingredients && recipeData.ingredients.length > 0 && (
-              <View style={styles.section}>
-                <View style={styles.sectionHeader}>
-                  <Text style={styles.sectionIcon}>🥄</Text>
-                  <Text style={styles.sectionTitle}>Ingredients</Text>
-                  <Text style={styles.sectionCount}>
-                    ({recipeData.ingredients.length} items)
-                  </Text>
-                </View>
-                <View style={styles.ingredientsList}>
-                  {recipeData.ingredients.map((ingredient, index) => (
-                    <View key={index} style={styles.ingredientItem}>
-                      <Text style={styles.ingredientBullet}>•</Text>
-                      <Text style={styles.ingredientText}>{ingredient}</Text>
-                    </View>
-                  ))}
-                </View>
-              </View>
-            )}
+          <Text className="text-3xl font-black text-white mb-4 tracking-tight leading-tight">
+            {recipeData.name}
+          </Text>
 
-            {/* Instructions Section */}
-            {recipeData.instructions && recipeData.instructions.length > 0 && (
-              <View style={styles.section}>
-                <View style={styles.sectionHeader}>
-                  <Text style={styles.sectionIcon}>📖</Text>
-                  <Text style={styles.sectionTitle}>Instructions</Text>
-                  <Text style={styles.sectionCount}>
-                    ({recipeData.instructions.length} steps)
-                  </Text>
-                </View>
-                <View style={styles.instructionsList}>
-                  {recipeData.instructions.map((instruction, index) => (
-                    <View key={index} style={styles.instructionItem}>
-                      <View style={styles.stepNumber}>
-                        <Text style={styles.stepNumberText}>{index + 1}</Text>
-                      </View>
-                      <Text style={styles.instructionText}>{instruction}</Text>
-                    </View>
-                  ))}
-                </View>
-              </View>
-            )}
+          {/* Quick Stats */}
+          <View className="flex-row items-center gap-3 mb-6 flex-wrap">
+            <View className="flex-row items-center bg-neutral-900 border border-neutral-800 px-3.5 py-2 rounded-2xl">
+              <Clock size={16} color="#f59e0b" />
+              <Text className="ml-2 text-neutral-300 text-sm font-semibold">
+                {recipeData.totalTime || "30 min"}
+              </Text>
+            </View>
+            <View className="flex-row items-center bg-neutral-900 border border-neutral-800 px-3.5 py-2 rounded-2xl">
+              <ChefHat size={16} color="#f59e0b" />
+              <Text className="ml-2 text-neutral-300 text-sm font-semibold">
+                {recipeData.instructions.length} steps
+              </Text>
+            </View>
+            <View className="flex-row items-center bg-neutral-900 border border-neutral-800 px-3.5 py-2 rounded-2xl">
+              <Users size={16} color="#f59e0b" />
+              <Text className="ml-2 text-neutral-300 text-sm font-semibold">
+                {recipeData.yield || "4 servings"}
+              </Text>
+            </View>
           </View>
-        </ScrollView>
-      </View>
 
-      {/* Start Cooking Button */}
-      <View style={[styles.footer]}>
-        <Pressable
-          onPress={handleStartCooking}
-          style={({ pressed }) => [
-            styles.startButton,
-            pressed && styles.buttonPressed,
-          ]}
-        >
-          <View style={styles.buttonContent}>
-            <Text style={styles.buttonText}>Start Cooking</Text>
-            <Text style={styles.buttonSubtext}>Step-by-Step Guide</Text>
+          {recipeData.description && (
+            <View className="bg-amber-500/5 border border-amber-500/10 rounded-3xl p-5 mb-8">
+              <Text className="text-neutral-400 text-base leading-relaxed italic">
+                "{recipeData.description}"
+              </Text>
+            </View>
+          )}
+
+          {/* Ingredients */}
+          <View className="mb-8">
+            <View className="flex-row items-center mb-5 px-1">
+              <Text className="text-2xl font-black text-white">Ingredients</Text>
+              <View className="ml-3 bg-neutral-900 px-2 py-0.5 rounded-lg border border-neutral-800">
+                <Text className="text-neutral-500 text-sm font-bold">{recipeData.ingredients.length}</Text>
+              </View>
+            </View>
+            <View className="bg-neutral-900 rounded-[32px] p-6 border border-neutral-800/50">
+              {recipeData.ingredients.map((ing, i) => (
+                <View key={i} className={cn("py-3 flex-row items-center", i < recipeData.ingredients.length - 1 && "border-b border-neutral-800/50")}>
+                  <View className="w-2 h-2 rounded-full bg-amber-500/80 mr-4" />
+                  <Text className="text-neutral-200 text-base flex-1 font-medium">{ing}</Text>
+                </View>
+              ))}
+            </View>
           </View>
-        </Pressable>
+
+          {/* Steps Preview */}
+          <View className="mb-8">
+             <View className="flex-row items-center mb-5 px-1">
+              <Text className="text-2xl font-black text-white">Instructions</Text>
+              <View className="ml-3 bg-neutral-900 px-2 py-0.5 rounded-lg border border-neutral-800">
+                <Text className="text-neutral-500 text-sm font-bold">{recipeData.instructions.length}</Text>
+              </View>
+            </View>
+            <View className="gap-4">
+              {recipeData.instructions.map((step, i) => (
+                <View key={i} className="bg-neutral-900/50 rounded-3xl p-5 flex-row border border-neutral-800/30">
+                  <Text className="text-amber-500 font-black mr-4 text-lg">{i + 1}</Text>
+                  <Text className="text-neutral-400 flex-1 leading-snug font-medium">{step}</Text>
+                </View>
+              ))}
+            </View>
+          </View>
+        </View>
+      </ScrollView>
+
+      {/* Floating Actions */}
+      <View
+        className="absolute bottom-0 left-0 right-0 px-6 pt-5 bg-neutral-950/95 border-t border-neutral-900"
+        style={{ paddingBottom: insets.bottom + 20 }}
+      >
+        <View className="flex-row gap-4">
+          <Pressable
+            onPress={handleSaveRecipe}
+            disabled={isSaving || isSaved}
+            className={cn(
+              "flex-1 h-16 rounded-[22px] items-center justify-center border",
+              isSaved 
+                ? "bg-neutral-900 border-neutral-800" 
+                : "bg-neutral-900 border-neutral-700 active:bg-neutral-800"
+            )}
+          >
+            <View className="flex-row items-center">
+              <Heart 
+                size={22} 
+                color={isSaved ? "#f59e0b" : "#ffffff"} 
+                fill={isSaved ? "#f59e0b" : "transparent"} 
+              />
+              <Text className={cn(
+                "ml-2.5 font-bold text-lg",
+                isSaved ? "text-amber-500" : "text-white"
+              )}>
+                {isSaving ? "Saving..." : isSaved ? "Saved" : "Save later"}
+              </Text>
+            </View>
+          </Pressable>
+
+          <Pressable
+            onPress={handleStartCooking}
+            className="flex-[1.6] h-16 rounded-[22px] bg-amber-500 items-center justify-center flex-row shadow-2xl active:scale-[0.98]"
+          >
+            <Play size={22} color="#000000" fill="#000000" />
+            <Text className="ml-2.5 text-black font-black text-xl uppercase tracking-tighter">
+              Start Cooking
+            </Text>
+          </Pressable>
+        </View>
       </View>
-    </SafeAreaView>
+    </View>
   );
 }
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: "#000000",
-  },
-  loadingContainer: {
-    flex: 1,
-    justifyContent: "center",
-    alignItems: "center",
-    gap: 16,
-  },
-  loadingText: {
-    fontSize: 16,
-    color: "#9ca3af",
-    fontWeight: "500",
-  },
-  topBar: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingHorizontal: 20,
-    paddingBottom: 12,
-    backgroundColor: "#000000",
-    zIndex: 10,
-  },
-  backButton: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    backgroundColor: "#1a1a1a",
-    borderWidth: 1,
-    borderColor: "#333333",
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  backButtonIcon: {
-    fontSize: 20,
-    color: "#9ca3af",
-    fontWeight: "700",
-  },
-  buttonPressed: {
-    opacity: 0.7,
-  },
-  contentWrapper: {
-    flex: 1,
-  },
-  scrollView: {
-    flex: 1,
-  },
-  scrollContent: {
-    paddingBottom: 20,
-  },
-  imageContainer: {
-    width: "100%",
-    height: 280,
-    backgroundColor: "#1a1a1a",
-  },
-  recipeImage: {
-    width: "100%",
-    height: "100%",
-  },
-  imagePlaceholder: {
-    width: "100%",
-    height: "100%",
-    justifyContent: "center",
-    alignItems: "center",
-    backgroundColor: "#0a0a0a",
-  },
-  placeholderIcon: {
-    fontSize: 56,
-    marginBottom: 8,
-  },
-  placeholderText: {
-    fontSize: 14,
-    color: "#6b7280",
-    fontWeight: "600",
-  },
-  content: {
-    paddingHorizontal: 24,
-    paddingTop: 24,
-    paddingBottom: 24,
-    backgroundColor: "#000000",
-  },
-  recipeName: {
-    fontSize: 28,
-    fontWeight: "800",
-    color: "#ffffff",
-    marginBottom: 12,
-    lineHeight: 34,
-    letterSpacing: -0.3,
-  },
-  description: {
-    fontSize: 16,
-    color: "#9ca3af",
-    lineHeight: 24,
-    marginBottom: 20,
-    fontWeight: "400",
-  },
-  metaContainer: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 12,
-    marginTop: 8,
-  },
-  metaItem: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "#1a1a1a",
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: "#333333",
-  },
-  metaIcon: {
-    fontSize: 16,
-    marginRight: 6,
-  },
-  metaText: {
-    fontSize: 14,
-    color: "#e1e4e8",
-    fontWeight: "600",
-  },
-  footer: {
-    paddingHorizontal: 20,
-    paddingTop: 16,
-    backgroundColor: "#000000",
-    borderTopWidth: 1,
-    borderTopColor: "#333333",
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: -2 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 8,
-  },
-  startButton: {
-    width: "100%",
-    borderRadius: 20,
-    minHeight: 70,
-    backgroundColor: "#ffa500",
-    borderWidth: 2,
-    borderColor: "#f59e0b",
-    justifyContent: "center",
-    alignItems: "center",
-    paddingVertical: 18,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 12,
-    elevation: 6,
-  },
-  buttonContent: {
-    alignItems: "center",
-    gap: 4,
-    paddingHorizontal: 20,
-    paddingVertical: 10,
-    borderRadius: 10,
-    backgroundColor: "transparent",
-    justifyContent: "center",
-  },
-  buttonText: {
-    color: "#000000",
-    fontSize: 18,
-    fontWeight: "800",
-    letterSpacing: 0.3,
-  },
-  buttonSubtext: {
-    color: "rgba(0, 0, 0, 0.8)",
-    fontSize: 13,
-    fontWeight: "500",
-  },
-  buttonDisabled: {
-    opacity: 0.6,
-  },
-  section: {
-    marginTop: 32,
-    paddingTop: 24,
-    borderTopWidth: 1,
-    borderTopColor: "#333333",
-  },
-  sectionHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginBottom: 16,
-    gap: 10,
-  },
-  sectionIcon: {
-    fontSize: 20,
-  },
-  sectionTitle: {
-    fontSize: 20,
-    fontWeight: "800",
-    color: "#ffffff",
-    flex: 1,
-  },
-  sectionCount: {
-    fontSize: 14,
-    fontWeight: "600",
-    color: "#9ca3af",
-  },
-  ingredientsList: {
-    gap: 12,
-  },
-  ingredientItem: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    paddingVertical: 8,
-  },
-  ingredientBullet: {
-    fontSize: 18,
-    color: "#ffa500",
-    marginRight: 12,
-    marginTop: 2,
-    fontWeight: "700",
-  },
-  ingredientText: {
-    flex: 1,
-    fontSize: 15,
-    color: "#e1e4e8",
-    lineHeight: 22,
-    fontWeight: "400",
-  },
-  instructionsList: {
-    gap: 20,
-  },
-  instructionItem: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-  },
-  stepNumber: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: "#ffa500",
-    justifyContent: "center",
-    alignItems: "center",
-    marginRight: 14,
-    flexShrink: 0,
-  },
-  stepNumberText: {
-    fontSize: 16,
-    fontWeight: "800",
-    color: "#000000",
-  },
-  instructionText: {
-    flex: 1,
-    fontSize: 15,
-    color: "#e1e4e8",
-    lineHeight: 24,
-    fontWeight: "400",
-  },
-});

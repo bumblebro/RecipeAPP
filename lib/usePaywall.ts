@@ -42,16 +42,15 @@ export function usePaywall() {
   );
 
   /**
-   * Check if user can extract a recipe (respects limits for free users)
-   * Shows paywall if limit reached
+   * Validate if user can extract a recipe (check limit only)
    */
-  const checkAndUseRecipeExtraction = useCallback((): boolean => {
+  const validateRecipeExtraction = useCallback((): boolean => {
     if (isSubscribed) return true;
 
     if (!canExtractRecipe()) {
       Alert.alert(
-        'Daily Limit Reached',
-        `You've used all ${FREE_TIER_LIMITS.recipeExtractionsPerDay} free recipe extractions for today. Upgrade to Premium for unlimited access!`,
+        'Monthly Limit Reached',
+        `You've used all ${FREE_TIER_LIMITS.recipeExtractionsPerMonth} free recipe extractions for this month. Upgrade to Premium for unlimited access!`,
         [
           { text: 'Maybe Later', style: 'cancel' },
           { text: 'Upgrade', onPress: showPaywall },
@@ -59,21 +58,37 @@ export function usePaywall() {
       );
       return false;
     }
-
-    return incrementRecipeExtractions();
-  }, [isSubscribed, canExtractRecipe, incrementRecipeExtractions, showPaywall]);
+    return true;
+  }, [isSubscribed, canExtractRecipe, showPaywall]);
 
   /**
-   * Check if user can start a cooking session (respects limits for free users)
-   * Shows paywall if limit reached
+   * Record a successful extraction and handle paywall trigger
    */
-  const checkAndUseCookingSession = useCallback((): boolean => {
+  const recordSuccessfulExtraction = useCallback(() => {
+    if (isSubscribed) return;
+
+    // Check if this is the first extraction before incrementing
+    const isFirstExtraction = useUsageStore.getState().recipeExtractions === 0;
+    const success = incrementRecipeExtractions();
+
+    if (success && isFirstExtraction) {
+      // Show paywall after a short delay so user can see the extraction result first
+      setTimeout(() => {
+        showPaywall();
+      }, 1500);
+    }
+  }, [isSubscribed, showPaywall, incrementRecipeExtractions]);
+
+  /**
+   * Validate if user can start a cooking session (check limit only)
+   */
+  const validateCookingSession = useCallback((): boolean => {
     if (isSubscribed) return true;
 
     if (!canStartCookingSession()) {
       Alert.alert(
-        'Daily Limit Reached',
-        `You've used all ${FREE_TIER_LIMITS.cookingSessionsPerDay} free cooking sessions for today. Upgrade to Premium for unlimited access!`,
+        'Monthly Limit Reached',
+        `You've used all ${FREE_TIER_LIMITS.cookingSessionsPerMonth} free cooking sessions for this month. Upgrade to Premium for unlimited access!`,
         [
           { text: 'Maybe Later', style: 'cancel' },
           { text: 'Upgrade', onPress: showPaywall },
@@ -81,9 +96,16 @@ export function usePaywall() {
       );
       return false;
     }
+    return true;
+  }, [isSubscribed, canStartCookingSession, showPaywall]);
 
-    return incrementCookingSessions();
-  }, [isSubscribed, canStartCookingSession, incrementCookingSessions, showPaywall]);
+  /**
+   * Record a successful cooking session
+   */
+  const recordSuccessfulCookingSession = useCallback(() => {
+    if (isSubscribed) return;
+    incrementCookingSessions();
+  }, [isSubscribed, incrementCookingSessions]);
 
   /**
    * Check if user can save a recipe (max 5 for free users)
@@ -122,8 +144,10 @@ export function usePaywall() {
     requireSubscription,
     
     // Usage-aware actions
-    checkAndUseRecipeExtraction,
-    checkAndUseCookingSession,
+    validateRecipeExtraction,
+    recordSuccessfulExtraction,
+    validateCookingSession,
+    recordSuccessfulCookingSession,
     checkCanSaveRecipe,
   };
 }

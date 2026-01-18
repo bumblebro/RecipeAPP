@@ -12,6 +12,7 @@ import { Roboto_400Regular, Roboto_500Medium, Roboto_700Bold } from '@expo-googl
 
 import { useAuthStore, initializeAuthListener } from '../stores/useAuthStore';
 import { useSubscriptionStore } from '../stores/useSubscriptionStore';
+import { useUsageStore, FREE_TIER_LIMITS } from '../stores/useUsageStore';
 import { revenueCatService } from '../lib/revenuecat-service';
 
 import '../app/global.css';
@@ -27,9 +28,13 @@ SplashScreen.preventAutoHideAsync();
 function useProtectedRoute() {
   const { isAuthenticated, isInitialized } = useAuthStore();
   const isSubscribed = useSubscriptionStore((s) => s.isSubscribed);
+  const { recipeExtractions, cookingSessions } = useUsageStore();
   const segments = useSegments();
   const router = useRouter();
   const [hasShownPaywall, setHasShownPaywall] = useState(false);
+
+  const limitsCrossed = recipeExtractions >= FREE_TIER_LIMITS.recipeExtractionsPerMonth ||
+    cookingSessions >= FREE_TIER_LIMITS.cookingSessionsPerMonth;
 
   useEffect(() => {
     // Wait until auth state is initialized
@@ -46,16 +51,15 @@ function useProtectedRoute() {
       // User is signed in but still in auth group
       // Redirect to main app
       router.replace('/(tabs)');
-      
-      // Show paywall after login for non-subscribers (after a short delay to let navigation complete)
-      if (!isSubscribed && !hasShownPaywall) {
-        setHasShownPaywall(true);
-        setTimeout(() => {
-          router.push('/paywall');
-        }, 500);
-      }
+    } else if (isAuthenticated && !inAuthGroup && !inPaywall && !isSubscribed && limitsCrossed && !hasShownPaywall) {
+      // User is logged in, not on paywall, and has crossed limits
+      // Show paywall on app open/install
+      setHasShownPaywall(true);
+      setTimeout(() => {
+        router.push('/paywall');
+      }, 800);
     }
-  }, [isAuthenticated, isInitialized, segments, isSubscribed, hasShownPaywall]);
+  }, [isAuthenticated, isInitialized, segments, isSubscribed, hasShownPaywall, limitsCrossed]);
 }
 
 export default function RootLayout() {
@@ -84,14 +88,8 @@ export default function RootLayout() {
       try {
         await revenueCatService.initialize();
 
-        // Check current subscription status
-        const customerInfo = await revenueCatService.getCustomerInfo();
-        const isActive = customerInfo.entitlements.active['premium'] !== undefined;
-
-        if (isActive) {
-          const expiration = customerInfo.entitlements.active['premium']?.expirationDate;
-          useSubscriptionStore.getState().setSubscription('premium', expiration || null);
-        }
+        // Check current subscription status using centralized logic
+        await revenueCatService.checkSubscriptionStatus();
       } catch (error) {
         console.error('RevenueCat init error:', error);
       }
@@ -135,8 +133,7 @@ export default function RootLayout() {
       <Stack.Screen
         name="recipe-preview"
         options={{
-          presentation: 'modal',
-          animation: 'slide_from_bottom',
+          animation: 'slide_from_right',
         }}
       />
       <Stack.Screen
@@ -154,9 +151,8 @@ export default function RootLayout() {
       <Stack.Screen
         name="paywall"
         options={{
-          presentation: 'modal',
           headerShown: false,
-          animation: 'slide_from_bottom',
+          animation: 'slide_from_right',
         }}
       />
     </Stack>

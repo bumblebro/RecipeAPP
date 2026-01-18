@@ -9,6 +9,10 @@ import { router } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import { useAuthStore } from '../stores/useAuthStore';
 import { useSubscriptionStore } from '../stores/useSubscriptionStore';
+import { useCookbookStore } from '../stores/useCookbookStore';
+import { useCookingStore } from '../stores/useCookingStore';
+import { useSettingsStore } from '../stores/useSettingsStore';
+import { useUsageStore } from '../stores/useUsageStore';
 import { AuthService } from '../features/auth/auth.service';
 import { authApi } from '../features/auth/auth.api';
 import { AuthResponse, AuthUser, AuthError } from '../types/auth';
@@ -173,8 +177,14 @@ export function useAuth(): UseAuthReturn {
     setLoading(true);
 
     await AuthService.logout();
-    reset();
+    reset(); // Clear AuthStore
+    
+    // Clear all personalized stores
     useSubscriptionStore.getState().clearSubscription();
+    useCookbookStore.getState().clearCookbook();
+    useCookingStore.getState().resetSession();
+    useSettingsStore.getState().clearSettings();
+    useUsageStore.getState().clearUsage();
 
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     router.replace('/(auth)/login' as any);

@@ -6,18 +6,21 @@ import {
   StyleSheet,
   ScrollView,
   StatusBar,
+  ActivityIndicator,
 } from "react-native";
 import { useRouter, useLocalSearchParams } from "expo-router";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { ListChecks, ArrowLeft, Play, Info, Check, Square, ChevronRight } from "lucide-react-native";
 import { MotiView, MotiText, AnimatePresence } from "moti";
 import { LinearGradient } from "expo-linear-gradient";
+import { formatQuantity } from "../lib/format";
 
 export default function IngredientsNeededScreen() {
   const router = useRouter();
   const params = useLocalSearchParams();
   const insets = useSafeAreaInsets();
   const [checkedIngredients, setCheckedIngredients] = useState<Set<number>>(new Set());
+  const [isLoading, setIsLoading] = useState(false);
 
   let recipeData = null;
   if (typeof params.recipe === "string") {
@@ -173,12 +176,7 @@ export default function IngredientsNeededScreen() {
                           styles.ingredientQuantity,
                           isChecked && styles.textStrikethrough
                         ]}>
-                          {ingredient.quantity} {ingredient.unit || ""}
-                        </Text>
-                      )}
-                      {ingredient.originalString && !isChecked && (
-                        <Text style={styles.originalString}>
-                          Original: {ingredient.originalString}
+                          {formatQuantity(ingredient.quantity)} {ingredient.unit || ""}
                         </Text>
                       )}
                     </View>
@@ -194,24 +192,27 @@ export default function IngredientsNeededScreen() {
       <View style={[styles.footer, { paddingBottom: Math.max(insets.bottom, 20) }]}>
         <Pressable
           onPress={handleStartCooking}
+          disabled={isLoading}
           style={({ pressed }) => [
-            styles.startButton,
-            pressed && styles.startButtonPressed,
+            styles.continueButtonContainer,
+            isLoading && styles.continueButtonDisabled,
+            pressed && { transform: [{ scale: 0.98 }] }
           ]}
         >
           <LinearGradient
-            colors={["#F59E0B", "#D97706"]}
+            colors={['#fbbf24', '#f59e0b', '#d97706']}
             start={{ x: 0, y: 0 }}
             end={{ x: 1, y: 0 }}
-            style={styles.gradient}
+            style={styles.continueButtonGradient}
           >
-            <View style={styles.buttonContent}>
-              <View style={styles.playIconContainer}>
-                <Play size={20} color="#000000" fill="#000000" />
-              </View>
-              <Text style={styles.startButtonText}>Start Cooking</Text>
-            </View>
-            <ChevronRight size={24} color="#000000" style={styles.arrowIcon} />
+            {isLoading ? (
+              <ActivityIndicator color="#000" />
+            ) : (
+              <Text style={styles.continueButtonText}>
+                Start Cooking ({selectedServings}{" "}
+                {selectedServings === 1 ? "serving" : "servings"})
+              </Text>
+            )}
           </LinearGradient>
         </Pressable>
       </View>
@@ -344,28 +345,26 @@ const styles = StyleSheet.create({
   },
   ingredientDetails: {
     flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
   },
   ingredientName: {
+    flex: 1,
     fontSize: 18,
     fontWeight: "700",
     color: "#ffffff",
-    marginBottom: 2,
     textTransform: "capitalize",
+    marginRight: 12,
   },
   textStrikethrough: {
     textDecorationLine: "line-through",
     color: "#4b5563",
   },
   ingredientQuantity: {
-    fontSize: 16,
+    fontSize: 18,
     fontWeight: "600",
     color: "#ffa500",
-  },
-  originalString: {
-    fontSize: 13,
-    color: "#6b7280",
-    fontStyle: "italic",
-    marginTop: 4,
   },
   footer: {
     position: "absolute",
@@ -381,49 +380,28 @@ const styles = StyleSheet.create({
     borderTopColor: "rgba(255,255,255,0.12)",
     zIndex: 999,
   },
-  startButton: {
-    height: 64,
-    borderRadius: 28,
-    // Removed overflow: hidden to ensure the shadow is visible on iOS
-    shadowColor: "#F59E0B",
+  continueButtonContainer: {
+    borderRadius: 16,
+    shadowColor: "#f59e0b",
     shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.5,
+    shadowOpacity: 0.4,
     shadowRadius: 15,
     elevation: 8,
   },
-  gradient: {
-    flex: 1,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingHorizontal: 24,
-    borderRadius: 28, // Explicitly rounded for the gradient component
-  },
-  buttonContent: {
-    flexDirection: "row",
-    alignItems: "center",
-  },
-  playIconContainer: {
-    width: 36,
-    height: 36,
-    borderRadius: 12,
-    backgroundColor: "rgba(0,0,0,0.1)",
+  continueButtonGradient: {
+    paddingVertical: 18,
+    borderRadius: 16,
     justifyContent: "center",
     alignItems: "center",
-    marginRight: 16,
   },
-  startButtonPressed: {
-    opacity: 0.9,
-    transform: [{ scale: 0.98 }],
+  continueButtonDisabled: {
+    opacity: 0.6,
   },
-  startButtonText: {
+  continueButtonText: {
     fontSize: 18,
     fontWeight: "900",
     color: "#000000",
     letterSpacing: -0.2,
-  },
-  arrowIcon: {
-    opacity: 0.8,
   },
   errorContainer: {
     flex: 1,

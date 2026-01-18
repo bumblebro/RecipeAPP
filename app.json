@@ -1,17 +1,22 @@
 {
   "expo": {
-    "name": "RecipeAPP",
-    "slug": "RecipeAPP",
+    "name": "StepChef",
+    "slug": "stepchef",
     "jsEngine": "hermes",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/images/icon.png",
-    "scheme": "recipeapp",
+    "icon": "./assets/logo/icon.png",
+    "splash": {
+      "image": "./assets/logo/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#ffffff"
+    },
+    "scheme": "stepchef",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.outvibe.RecipeAPP",
+      "bundleIdentifier": "com.outvibe.stepchef",
       "appleTeamId": "5WJ6NJFUKB",
       "googleServicesFile": "./GoogleService-Info.plist",
       "infoPlist": {
@@ -22,16 +27,15 @@
     "android": {
       "googleServicesFile": "./google-services.json",
       "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
-        "foregroundImage": "./assets/images/android-icon-foreground.png",
-        "backgroundImage": "./assets/images/android-icon-background.png",
-        "monochromeImage": "./assets/images/android-icon-monochrome.png"
+        "foregroundImage": "./assets/logo/adaptive-icon.png",
+        "backgroundColor": "#ffffff"
       },
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
-      "package": "com.outvibe.RecipeAPP",
-      "permissions": ["RECORD_AUDIO"]
-
+      "package": "com.outvibe.stepchef",
+      "permissions": [
+        "RECORD_AUDIO"
+      ]
     },
     "web": {
       "output": "static",
@@ -42,12 +46,11 @@
       [
         "expo-splash-screen",
         {
-          "image": "./assets/images/splash-icon.png",
-          "imageWidth": 200,
-          "resizeMode": "contain",
           "backgroundColor": "#ffffff",
+          "image": "./assets/logo/logo-b.png",
           "dark": {
-            "backgroundColor": "#000000"
+            "image": "./assets/logo/logo-w.png",
+            "backgroundColor": "#ffffff"
           }
         }
       ],
@@ -67,12 +70,12 @@
       [
         "expo-share-intent",
         {
-          "iosAppGroupIdentifier": "group.com.outvibe.RecipeAPP",
+          "iosAppGroupIdentifier": "group.com.outvibe.stepchef",
           "iosActivationRules": {
-             "NSExtensionActivationSupportsWebURLWithMaxCount": 1,
-             "NSExtensionActivationSupportsWebPageWithMaxCount": 1,
-             "NSExtensionActivationSupportsImageWithMaxCount": 1,
-             "NSExtensionActivationSupportsText": true
+            "NSExtensionActivationSupportsWebURLWithMaxCount": 1,
+            "NSExtensionActivationSupportsWebPageWithMaxCount": 1,
+            "NSExtensionActivationSupportsImageWithMaxCount": 1,
+            "NSExtensionActivationSupportsText": true
           }
         }
       ]

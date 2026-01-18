@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from "react";
+import React, { useState, useMemo, useEffect, useCallback } from "react";
 import {
   View,
   Text,
@@ -6,9 +6,11 @@ import {
   StyleSheet,
   ActivityIndicator,
 } from "react-native";
-import { useRouter, useLocalSearchParams } from "expo-router";
+import { useRouter, useLocalSearchParams, useFocusEffect } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { LinearGradient } from "expo-linear-gradient";
 import { api } from "../features/api/api.client";
+import { usePaywall } from "../lib/usePaywall";
 
 const SERVING_OPTIONS = [1, 2, 3, 4, 6, 8, 10, 12];
 
@@ -16,6 +18,35 @@ export default function ServingSizeScreen() {
   const router = useRouter();
   const params = useLocalSearchParams();
   const [isLoading, setIsLoading] = useState(false);
+
+  // Reset loading state when screen comes into focus (e.g. back navigation)
+  useFocusEffect(
+    useCallback(() => {
+      setIsLoading(false);
+    }, [])
+  );
+
+  const loadingMessages = [
+    "Gathering ingredients...",
+    "Scaling quantities...",
+    "Heating the pan...",
+    "Consulting the chef...",
+    "Setting the table...",
+    "Preparing your guide..."
+  ];
+  const [loadingMessageIndex, setLoadingMessageIndex] = useState(0);
+
+  useEffect(() => {
+    let interval: any;
+    if (isLoading) {
+      interval = setInterval(() => {
+        setLoadingMessageIndex((prev) => (prev + 1) % loadingMessages.length);
+      }, 2000);
+    } else {
+      setLoadingMessageIndex(0);
+    }
+    return () => clearInterval(interval);
+  }, [isLoading]);
 
   const recipe = useMemo(() => {
     if (typeof params.recipe === "string") {
@@ -48,8 +79,15 @@ export default function ServingSizeScreen() {
     }
   }, [originalServings]);
 
+  const { isSubscribed, validateCookingSession, recordSuccessfulCookingSession } = usePaywall();
+
   const handleContinue = async () => {
     if (!recipe) return;
+
+    if (!isSubscribed) {
+      const canProceed = validateCookingSession();
+      if (!canProceed) return;
+    }
 
     setIsLoading(true);
 
@@ -65,6 +103,9 @@ export default function ServingSizeScreen() {
       if (!response.success) {
         throw new Error("Failed to process the recipe.");
       }
+
+      // Record usage only on success (Cooking made usage = success API response)
+      recordSuccessfulCookingSession();
 
       // Add serving size info to the processed data
       const finalRecipe = {
@@ -178,19 +219,32 @@ export default function ServingSizeScreen() {
         <Pressable
           onPress={handleContinue}
           disabled={isLoading}
-          style={[
-            styles.continueButton,
+          style={({ pressed }) => [
+            styles.continueButtonContainer,
             isLoading && styles.continueButtonDisabled,
+            pressed && { transform: [{ scale: 0.98 }] }
           ]}
         >
-          {isLoading ? (
-            <ActivityIndicator color="#fff" />
-          ) : (
-            <Text style={styles.continueButtonText}>
-              Start Cooking ({selectedServings}{" "}
-              {selectedServings === 1 ? "serving" : "servings"})
-            </Text>
-          )}
+          <LinearGradient
+            colors={['#fbbf24', '#f59e0b', '#d97706']}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 0 }}
+            style={styles.continueButtonGradient}
+          >
+            {isLoading ? (
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                <ActivityIndicator color="#000" />
+                <Text style={styles.continueButtonText}>
+                  {loadingMessages[loadingMessageIndex]}
+                </Text>
+              </View>
+            ) : (
+              <Text style={styles.continueButtonText}>
+                Start Cooking ({selectedServings}{" "}
+                {selectedServings === 1 ? "serving" : "servings"})
+              </Text>
+            )}
+          </LinearGradient>
         </Pressable>
       </View>
     </SafeAreaView>
@@ -327,22 +381,31 @@ const styles = StyleSheet.create({
     fontWeight: "600",
     color: "#9ca3af",
   },
-  continueButton: {
-    backgroundColor: "#ffa500",
-    paddingVertical: 18,
-    borderRadius: 16,
-    justifyContent: "center",
-    alignItems: "center",
+  continueButtonContainer: {
     marginTop: "auto",
     marginBottom: 20,
+    borderRadius: 20,
+    shadowColor: "#f59e0b",
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.4,
+    shadowRadius: 12,
+    elevation: 10,
+  },
+  continueButtonGradient: {
+    paddingVertical: 18,
+    borderRadius: 20,
+    justifyContent: "center",
+    alignItems: "center",
+    flexDirection: 'row',
   },
   continueButtonDisabled: {
     opacity: 0.6,
   },
   continueButtonText: {
     fontSize: 18,
-    fontWeight: "800",
+    fontWeight: "900",
     color: "#000000",
+    letterSpacing: -0.2,
   },
   errorContainer: {
     flex: 1,

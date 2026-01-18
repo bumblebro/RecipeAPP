@@ -1,6 +1,6 @@
 /**
  * RevenueCat Service
- * Wrapper for RevenueCat SDK operations
+ * Wrapper for RevenueCat SDK operations in StepChef
  */
 
 import { Platform, Linking } from 'react-native';
@@ -32,7 +32,7 @@ const API_KEYS = {
 };
 
 // Entitlement identifier from RevenueCat dashboard
-const ENTITLEMENT_ID = 'SmartRecipe Pro';
+const ENTITLEMENT_ID = 'Premium';
 
 class RevenueCatService {
   private isInitialized = false;
@@ -52,6 +52,11 @@ class RevenueCatService {
       purchases.configure({
         apiKey,
         appUserID: userId,
+      });
+
+      // Listen for real-time customer info updates (e.g. expiration while app is open)
+      purchases.addCustomerInfoUpdateListener(() => {
+        this.checkSubscriptionStatus();
       });
 
       this.isInitialized = true;
@@ -129,20 +134,27 @@ class RevenueCatService {
       console.log('DEBUG: Active Entitlements:', Object.keys(customerInfo.entitlements.active));
       console.log('DEBUG: Checking for Entitlement ID:', ENTITLEMENT_ID);
 
-      const isActive = customerInfo.entitlements.active[ENTITLEMENT_ID] !== undefined;
+      const activeEntitlements = Object.keys(customerInfo.entitlements.active);
+      const activeSubscriptions = customerInfo.activeSubscriptions || [];
+      
+      // Look for our specific entitlement ID
+      const entitlement = customerInfo.entitlements.active[ENTITLEMENT_ID] || customerInfo.entitlements.active[activeEntitlements[0]];
+      
+      // If we have an active entitlement OR an active subscription, consider it premium
+      // (Fallback for missing entitlement-product link in dashboard)
+      const isActive = activeEntitlements.length > 0 || activeSubscriptions.length > 0;
       
       // Sync with backend (fire and forget)
-      this.syncSubscription(isActive, customerInfo.entitlements.active[ENTITLEMENT_ID]?.expirationDate || null);
+      this.syncSubscription(isActive, entitlement?.expirationDate || null);
       
       if (isActive) {
-        console.log('DEBUG: Subscription is ACTIVE');
+        console.log('DEBUG: Subscription is ACTIVE (Entitlements:', activeEntitlements.join(', '), '| Subs:', activeSubscriptions.join(', '), ')');
         useSubscriptionStore.getState().setSubscription(
           'premium', 
-          customerInfo.entitlements.active[ENTITLEMENT_ID]?.expirationDate || null
+          entitlement?.expirationDate || null
         );
       } else {
         console.log('DEBUG: Subscription is NOT ACTIVE. If you paid, check ENTITLEMENT_ID matches RevenueCat dashboard.');
-        // Only clear if we are sure (optional, mostly handling "active" is safer)
         useSubscriptionStore.getState().setSubscription('free', null);
       }
 
@@ -181,19 +193,59 @@ class RevenueCatService {
   /**
    * Sync subscription status with our backend
    */
+  // Tracking local state to avoid redundant syncs
+  private lastSyncedPlan: string | null = null;
+  private lastSyncedExpiration: string | null = null;
+
+  /**
+   * Sync subscription status with our backend
+   */
+  /**
+   * Sync subscription status with our backend
+   */
   private async syncSubscription(isActive: boolean, expirationDate: string | null) {
-    try {
-      // Dynamic import to avoid circular dependencies or issues if api client isn't ready
-      const { api } = await import('../features/api/api.client');
-      
       const plan = isActive ? 'premium' : 'free';
+      
+      // Prevent redundant syncs (Optimistic Check)
+      if (
+        this.lastSyncedPlan === plan && 
+        this.lastSyncedExpiration === expirationDate
+      ) {
+         return;
+      }
+
+      // Optimistically update tracking to block concurrent duplicate calls
+      const previousPlan = this.lastSyncedPlan;
+      const previousExpiration = this.lastSyncedExpiration;
+      
+      this.lastSyncedPlan = plan;
+      this.lastSyncedExpiration = expirationDate;
+
+    try {
+      // Dynamic import to avoid circular dependencies
+      const { api } = await import('../features/api/api.client');
+      const { useAuthStore } = await import('../stores/useAuthStore');
+      
+      const isAuthenticated = useAuthStore.getState().isAuthenticated;
+      
+      if (!isAuthenticated) {
+        // Revert since we didn't actually sync
+        this.lastSyncedPlan = previousPlan;
+        this.lastSyncedExpiration = previousExpiration;
+        console.log('Skipping subscription sync (user not authenticated)');
+        return;
+      }
+
       await api.post('/user/sync-subscription', { 
         plan,
         expirationDate 
       });
       console.log('Synced subscription with backend:', plan);
+      
     } catch (error) {
-      // Don't throw, just log. We don't want to block the UI if sync fails
+      // Revert on failure so we retry next time
+      this.lastSyncedPlan = previousPlan;
+      this.lastSyncedExpiration = previousExpiration;
       console.error('Failed to sync subscription with backend:', error);
     }
   }

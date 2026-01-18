@@ -3,93 +3,111 @@ import { Colors } from "../../constants/theme";
 import { useColorScheme } from "../../hooks/use-color-scheme.web";
 import {
   ChefHat,
-  BookOpen,
-  ShoppingCart,
-  Calendar,
-  Users,
   User,
   Heart,
+  Plus,
 } from "lucide-react-native";
+import { useState } from "react";
+import { View, Pressable, StyleSheet, Platform } from "react-native";
+import { AddRecipeOverlay } from "../../components/AddRecipeOverlay";
+import { useExtractionStore } from "../../stores/useExtractionStore";
+import * as Haptics from "expo-haptics";
 
 export default function TabLayout() {
   const colorScheme = useColorScheme();
-  const colors = Colors[colorScheme ?? "light"];
+  const { isAddModalVisible, setAddModalVisible } = useExtractionStore();
 
   return (
-    <Tabs
-      screenOptions={{
-        headerShown: false,
-        tabBarActiveTintColor: "#f59e0b",
-        tabBarInactiveTintColor: "#6b7280",
-        tabBarStyle: {
-          backgroundColor: "#0a0a0a",
-          borderTopColor: "#262626",
-          paddingTop: 8,
-          height: 60,
-        },
-        tabBarLabelStyle: {
-          fontSize: 12,
-          fontWeight: "600",
-          marginTop: 2,
-          marginBottom: 4,
-        },
-        tabBarIconStyle: {
-          marginTop: 4,
-        },
-      }}
-    >
-      <Tabs.Screen
-        name="index"
-        options={{
-          title: "Home",
-          tabBarIcon: ({ color }) => <BookOpen size={24} color={color} />,
+    <>
+      <Tabs
+        screenOptions={{
+          headerShown: false,
+          tabBarActiveTintColor: "#f59e0b",
+          tabBarInactiveTintColor: "#6b7280",
+          tabBarStyle: {
+            backgroundColor: "#0a0a0a",
+            borderTopColor: "#262626",
+            paddingTop: 12,
+            height: Platform.OS === 'ios' ? 92 : 72,
+            paddingBottom: Platform.OS === 'ios' ? 32 : 12,
+          },
+          tabBarLabelStyle: {
+            fontSize: 10,
+            fontWeight: "700",
+            marginTop: 2,
+            textTransform: 'uppercase',
+            letterSpacing: 0.5,
+          },
         }}
+      >
+        <Tabs.Screen
+          name="cook"
+          options={{
+            title: "Cook",
+            tabBarIcon: ({ color }) => <ChefHat size={24} color={color} />,
+          }}
+        />
+        <Tabs.Screen
+          name="plus"
+          options={{
+            title: "",
+            tabBarButton: () => (
+              <View className="flex-1 items-center justify-center">
+                <Pressable
+                  onPress={() => {
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                    setAddModalVisible(true);
+                  }}
+                  style={styles.floatingButton}
+                  className="bg-amber-500 shadow-lg shadow-amber-500/40"
+                >
+                  <Plus size={32} color="#000000" strokeWidth={3} />
+                </Pressable>
+              </View>
+            ),
+          }}
+        />
+
+        <Tabs.Screen
+          name="saved"
+          options={{
+            title: "Saved",
+            tabBarIcon: ({ color }) => <Heart size={24} color={color} />,
+          }}
+        />
+
+        <Tabs.Screen
+          name="profile"
+          options={{
+            href: null,
+          }}
+        />
+
+        <Tabs.Screen
+          name="index"
+          options={{
+            href: null,
+          }}
+        />
+      </Tabs>
+
+      <AddRecipeOverlay
+        isVisible={isAddModalVisible}
+        onClose={() => setAddModalVisible(false)}
       />
-      <Tabs.Screen
-        name="cook"
-        options={{
-          title: "Cook",
-          tabBarIcon: ({ color }) => <ChefHat size={24} color={color} />,
-        }}
-      />
-      <Tabs.Screen
-        name="saved"
-        options={{
-          title: "Saved",
-          tabBarIcon: ({ color }) => <Heart size={24} color={color} />,
-        }}
-      />
-      <Tabs.Screen
-        name="profile"
-        options={{
-          title: "Profile",
-          tabBarIcon: ({ color }) => <User size={24} color={color} />,
-        }}
-      />
-      <Tabs.Screen
-        name="cookbook"
-        options={{
-          href: null,
-        }}
-      />
-      <Tabs.Screen
-        name="grocery"
-        options={{
-          href: null,
-        }}
-      />
-      <Tabs.Screen
-        name="meals"
-        options={{
-          href: null,
-        }}
-      />
-      <Tabs.Screen
-        name="discover"
-        options={{
-          href: null,
-        }}
-      />
-    </Tabs>
+    </>
   );
 }
+
+const styles = StyleSheet.create({
+  floatingButton: {
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: Platform.OS === 'ios' ? 38 : 28,
+    borderWidth: 5,
+    borderColor: "#0a0a0a",
+  },
+});

@@ -1,125 +1,81 @@
-import React, { useState, useCallback, useEffect } from "react";
+import React from "react";
 import {
   View,
   Text,
   Pressable,
   ScrollView,
-  TextInput,
-  Modal,
+  Switch,
+  Platform,
+  Alert,
+  Linking,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Animated, { FadeInUp } from "react-native-reanimated";
+import { useRouter, useFocusEffect } from "expo-router";
 import * as Haptics from "expo-haptics";
-import { useRouter } from "expo-router";
 import {
-  User,
-  Edit3,
-  Heart,
-  LogOut,
-  ChevronRight,
-  History,
+  Mic,
+  Smartphone,
+  CreditCard,
+  RefreshCcw,
+  Mail,
   Zap,
-  Settings as SettingsIcon,
-  HelpCircle,
-  CreditCard
+  LogOut,
+  ShieldCheck,
+  FileText,
+  ChevronRight,
 } from "lucide-react-native";
-import { cn } from "../../lib/cn";
-import { useProfileStore } from "../../stores/useProfileStore";
 import { useAuth } from "../../hooks/useAuth";
+import { useSettingsStore } from "../../stores/useSettingsStore";
+import { useSubscriptionStore } from "../../stores/useSubscriptionStore";
+import { useUsageStore, FREE_TIER_LIMITS } from "../../stores/useUsageStore";
 import { revenueCatService } from "../../lib/revenuecat-service";
 import { usePaywall } from "../../lib/usePaywall";
-import { useSubscriptionStore } from "../../stores/useSubscriptionStore";
-import { FREE_TIER_LIMITS } from "../../stores/useUsageStore";
 
-interface MenuItemProps {
-  icon: React.ReactNode;
-  label: string;
-  onPress: () => void;
-  destructive?: boolean;
-}
-
-const MenuItem = ({ icon, label, onPress, destructive }: MenuItemProps) => (
-  <Pressable
-    onPress={() => {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-      onPress();
-    }}
-    className="flex-row items-center justify-between py-4 border-b border-neutral-900 active:opacity-60"
-  >
-    <View className="flex-row items-center">
-      <View className={cn(
-        "w-10 h-10 rounded-xl items-center justify-center mr-4",
-        destructive ? "bg-red-500/10" : "bg-neutral-900"
-      )}>
-        {icon}
-      </View>
-      <Text className={cn(
-        "text-base font-semibold",
-        destructive ? "text-red-500" : "text-white"
-      )}>
-        {label}
-      </Text>
-    </View>
-    {!destructive && <ChevronRight size={18} color="#4b5563" />}
-  </Pressable>
-);
-
-export default function ProfileScreen() {
+export default function SettingsScreen() {
   const insets = useSafeAreaInsets();
-  const router = useRouter();
   const {
-    username,
-    bio,
-    updateProfile,
-  } = useProfileStore();
+    voiceEnabled,
+    setVoiceEnabled,
+    keepScreenAwake,
+    setKeepScreenAwake,
+  } = useSettingsStore();
+
   const { logout, user } = useAuth();
-  
-  const { 
-    isSubscribed, 
-    showPaywall, 
-    remainingExtractions, 
-    remainingSessions, 
-    remainingSavedRecipes 
-  } = usePaywall();
-
+  const { isSubscribed, showPaywall } = usePaywall();
   const expirationDate = useSubscriptionStore(s => s.expirationDate);
+  const { recipeExtractions, cookingSessions, syncWithBackend } = useUsageStore();
 
-  // Format expiration date with time
-  const formattedExpiration = expirationDate 
-    ? new Date(expirationDate).toLocaleDateString('en-US', { 
-        year: 'numeric', 
-        month: 'long', 
-        day: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit'
-      })
-    : null;
+  // Sync usage with backend whenever screen comes into focus
+  useFocusEffect(
+    React.useCallback(() => {
+      syncWithBackend();
+    }, [syncWithBackend])
+  );
 
-  // Prefer auth user data, fallback to store data
-  const displayName = user?.displayName || username || user?.email?.split('@')[0] || "User";
-  const displayEmail = user?.email || "";
+  const handleToggleVoice = (value: boolean) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    setVoiceEnabled(value);
+  };
 
-  const [editUsername, setEditUsername] = useState(displayName);
-  const [editBio, setEditBio] = useState(bio);
-  const [showEditModal, setShowEditModal] = useState(false);
+  const handleToggleAwake = (value: boolean) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    setKeepScreenAwake(value);
+  };
 
-  // Sync edit state when profile changes
-  useEffect(() => {
-    setEditUsername(displayName);
-    setEditBio(bio);
-  }, [displayName, bio]);
-
-  const handleSaveProfile = useCallback(() => {
-    if (!editUsername.trim()) return;
-
+  const handleRestore = async () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    updateProfile({
-      username: editUsername.trim(),
-      bio: editBio.trim(),
-    });
-    setShowEditModal(false);
-    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-  }, [editUsername, editBio, updateProfile]);
+    try {
+      await revenueCatService.restorePurchases();
+    } catch (e) {
+      console.error("Restore Failed", e);
+    }
+  };
+
+  const handleFeedback = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    Linking.openURL("mailto:support@stepchef.app?subject=Feedback");
+  };
 
   return (
     <View className="flex-1 bg-neutral-950">
@@ -127,239 +83,218 @@ export default function ProfileScreen() {
         style={{
           flex: 1,
           paddingTop: insets.top,
-          backgroundColor: "#0a0a0a",
         }}
       >
-        <ScrollView className="flex-1" showsVerticalScrollIndicator={false}>
-          {/* Profile Header */}
-          <View className="px-5 py-8 items-center border-b border-neutral-900">
-            {/* Avatar */}
-            <View className="w-24 h-24 rounded-full bg-amber-500/20 border-2 border-amber-500 items-center justify-center mb-4 overflow-hidden">
-               {user?.photoURL ? (
-                  <View className="w-full h-full bg-neutral-800">
-                     <User size={48} color="#f59e0b" style={{ alignSelf: 'center', marginTop: 22 }} />
-                  </View>
-                ) : (
-                  <User size={48} color="#f59e0b" />
-                )}
+        <ScrollView className="flex-1 px-6" showsVerticalScrollIndicator={false}>
+          {/* Header */}
+          <View className="py-8">
+            <Text className="text-3xl font-bold text-white">Settings</Text>
+          </View>
+
+          {/* Preferences Section */}
+          <Animated.View entering={FadeInUp.delay(100)} className="gap-2">
+
+            {/* Voice Control */}
+            <View className="flex-row items-center justify-between py-4">
+              <View className="flex-row items-center">
+                <View className="w-10 h-10 rounded-xl bg-neutral-900 items-center justify-center mr-4">
+                  <Mic size={20} color="#f59e0b" />
+                </View>
+                <Text className="text-lg font-semibold text-white">Voice Control</Text>
+              </View>
+              <View className="flex-row items-center gap-3">
+                <Text className="text-neutral-500 font-bold text-sm uppercase">
+                  {voiceEnabled ? "ON" : "OFF"}
+                </Text>
+                <Switch
+                  value={voiceEnabled}
+                  onValueChange={handleToggleVoice}
+                  trackColor={{ false: "#171717", true: "#f59e0b" }}
+                  thumbColor={Platform.OS === 'ios' ? '#ffffff' : voiceEnabled ? '#ffffff' : '#404040'}
+                />
+              </View>
             </View>
 
-            <Text className="text-2xl font-bold text-white mb-1">
-              {displayName}
-            </Text>
-            <Text className="text-neutral-500 text-sm mb-6">{displayEmail}</Text>
+            {/* Keep Screen Awake */}
+            <View className="flex-row items-center justify-between py-4">
+              <View className="flex-row items-center">
+                <View className="w-10 h-10 rounded-xl bg-neutral-900 items-center justify-center mr-4">
+                  <Smartphone size={20} color="#f59e0b" />
+                </View>
+                <Text className="text-lg font-semibold text-white">Keep Screen Awake</Text>
+              </View>
+              <View className="flex-row items-center gap-3">
+                <Text className="text-neutral-500 font-bold text-sm uppercase">
+                  {keepScreenAwake ? "ON" : "OFF"}
+                </Text>
+                <Switch
+                  value={keepScreenAwake}
+                  onValueChange={handleToggleAwake}
+                  trackColor={{ false: "#171717", true: "#f59e0b" }}
+                  thumbColor={Platform.OS === 'ios' ? '#ffffff' : keepScreenAwake ? '#ffffff' : '#404040'}
+                />
+              </View>
+            </View>
+
+          </Animated.View>
+
+          {/* Separator */}
+          <View className="h-[1px] bg-neutral-900 my-4" />
+
+          {/* Upgrade CTA for Free Users */}
+          {!isSubscribed && (
+            <Animated.View entering={FadeInUp.delay(150)} className="mb-4">
+              <Pressable
+                onPress={showPaywall}
+                className="bg-amber-500 rounded-2xl p-5 flex-row items-center justify-between"
+              >
+                <View className="flex-row items-center flex-1 pr-4">
+                  <View className="w-12 h-12 bg-black/10 rounded-xl items-center justify-center mr-4">
+                    <Zap size={24} color="#000000" fill="#000000" />
+                  </View>
+                  <View className="flex-1">
+                    <Text className="text-black font-bold text-lg">Upgrade to Pro</Text>
+                    <Text className="text-black/60 text-sm font-medium">Unlock unlimited recipe imports & sessions</Text>
+                  </View>
+                </View>
+                <ChevronRight size={20} color="#000000" />
+              </Pressable>
+            </Animated.View>
+          )}
+
+          {/* Subscription Section */}
+          <Animated.View entering={FadeInUp.delay(200)} className="gap-2">
 
             <Pressable
               onPress={() => {
                 Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                setEditUsername(displayName);
-                setEditBio(bio);
-                setShowEditModal(true);
+                revenueCatService.manageSubscription();
               }}
-              className="bg-neutral-900 rounded-full px-6 py-2.5 flex-row items-center border border-neutral-800"
+              className="flex-row items-center justify-between py-4 active:opacity-60"
             >
-              <Edit3 size={16} color="#f59e0b" className="mr-2" />
-              <Text className="text-white font-semibold">Edit Profile</Text>
+              <View className="flex-row items-center">
+                <View className="w-10 h-10 rounded-xl bg-neutral-900 items-center justify-center mr-4">
+                  <CreditCard size={20} color="#9ca3af" />
+                </View>
+                <View>
+                  <Text className="text-lg font-semibold text-white">Subscription Details</Text>
+                  <Text className="text-neutral-500 text-xs">
+                    {isSubscribed ? "Premium Plan Active" : "Free Plan"}
+                  </Text>
+                </View>
+              </View>
             </Pressable>
-          </View>
 
-          {/* Menu Sections */}
-          <View className="px-5 py-4">
-            <Text className="text-neutral-500 text-xs font-bold uppercase tracking-widest mb-2 px-1">
-              Account
-            </Text>
-            <MenuItem 
-              icon={<Heart size={20} color="#f59e0b" />} 
-              label="Saved Recipes" 
-              onPress={() => router.push("/(tabs)/saved")} 
-            />
-            <MenuItem 
-              icon={<History size={20} color="#f59e0b" />} 
-              label="Cooking History" 
-              onPress={() => {}} 
-            />
-            
-            
-            <Text className="text-neutral-500 text-xs font-bold uppercase tracking-widest mt-8 mb-2 px-1">
-              Subscription
-            </Text>
-
-            {/* Subscription Status Card */}
-            <View className="bg-neutral-900 rounded-2xl p-4 mb-4 border border-neutral-800">
-              <View className="flex-row items-center justify-between mb-3">
-                <View className="flex-row items-center">
-                  <View className={cn(
-                    "w-10 h-10 rounded-xl items-center justify-center mr-3",
-                    isSubscribed ? "bg-amber-500/20" : "bg-neutral-800"
-                  )}>
-                    <Zap size={20} color={isSubscribed ? "#f59e0b" : "#9ca3af"} fill={isSubscribed ? "#f59e0b" : "none"} />
-                  </View>
-                  <View>
-                    <Text className="text-white font-bold text-base">
-                      {isSubscribed ? "Premium Plan" : "Free Plan"}
-                    </Text>
-                    <Text className="text-neutral-400 text-xs">
-                      {isSubscribed 
-                        ? (formattedExpiration ? `Renews ${formattedExpiration}` : "Active") 
-                        : "Limited Access"}
-                    </Text>
-                  </View>
+            {/* Usage Stats - Moved here to be part of the flow */}
+            <View className="bg-neutral-900/50 rounded-2xl border border-neutral-900 p-4 mt-2 gap-4">
+              <View className="flex-row items-center justify-between">
+                <View>
+                  <Text className="text-neutral-400 text-sm font-medium">Extractions Used</Text>
+                  <Text className="text-white text-base font-bold mt-0.5">
+                    {isSubscribed ? "Unlimited" : `${recipeExtractions} / ${FREE_TIER_LIMITS.recipeExtractionsPerMonth}`}
+                  </Text>
                 </View>
                 {!isSubscribed && (
-                  <Pressable 
-                    onPress={showPaywall}
-                    className="bg-amber-500 px-3 py-1.5 rounded-lg"
-                  >
-                    <Text className="text-black font-bold text-xs">Upgrade</Text>
-                  </Pressable>
+                  <View className="h-1.5 w-24 bg-neutral-800 rounded-full overflow-hidden">
+                    <View
+                      className="h-full bg-amber-500"
+                      style={{ width: `${(recipeExtractions / FREE_TIER_LIMITS.recipeExtractionsPerMonth) * 100}%` }}
+                    />
+                  </View>
                 )}
               </View>
 
-              {/* Usage Stats (only for free plan) */}
-              {!isSubscribed && (
-                <View className="bg-neutral-950/50 rounded-xl p-3 border border-neutral-800/50">
-                  <Text className="text-neutral-400 text-xs font-semibold mb-2 uppercase tracking-wider">
-                    Daily Usage
+              <View className="flex-row items-center justify-between">
+                <View>
+                  <Text className="text-neutral-400 text-sm font-medium">Cooking Sessions</Text>
+                  <Text className="text-white text-base font-bold mt-0.5">
+                    {isSubscribed ? "Unlimited" : `${cookingSessions} / ${FREE_TIER_LIMITS.cookingSessionsPerMonth}`}
                   </Text>
-                  
-                  {/* Extractions */}
-                  <View className="mb-2">
-                    <View className="flex-row justify-between mb-1">
-                      <Text className="text-neutral-300 text-xs">Recipe Extractions</Text>
-                      <Text className="text-neutral-300 text-xs">
-                        {Math.max(0, FREE_TIER_LIMITS.recipeExtractionsPerDay - remainingExtractions)} / {FREE_TIER_LIMITS.recipeExtractionsPerDay}
-                      </Text>
-                    </View>
-                    <View className="h-1.5 bg-neutral-800 rounded-full overflow-hidden">
-                      <View 
-                        className="h-full bg-amber-500/50 rounded-full" 
-                        style={{ width: `${((FREE_TIER_LIMITS.recipeExtractionsPerDay - remainingExtractions) / FREE_TIER_LIMITS.recipeExtractionsPerDay) * 100}%` }} 
-                      />
-                    </View>
-                  </View>
-
-                  {/* Cooking Sessions */}
-                  <View>
-                    <View className="flex-row justify-between mb-1">
-                      <Text className="text-neutral-300 text-xs">Cooking Sessions</Text>
-                      <Text className="text-neutral-300 text-xs">
-                        {Math.max(0, FREE_TIER_LIMITS.cookingSessionsPerDay - remainingSessions)} / {FREE_TIER_LIMITS.cookingSessionsPerDay}
-                      </Text>
-                    </View>
-                    <View className="h-1.5 bg-neutral-800 rounded-full overflow-hidden">
-                      <View 
-                        className="h-full bg-blue-500/50 rounded-full" 
-                        style={{ width: `${((FREE_TIER_LIMITS.cookingSessionsPerDay - remainingSessions) / FREE_TIER_LIMITS.cookingSessionsPerDay) * 100}%` }} 
-                      />
-                    </View>
-                  </View>
                 </View>
-              )}
+                {!isSubscribed && (
+                  <View className="h-1.5 w-24 bg-neutral-800 rounded-full overflow-hidden">
+                    <View
+                      className="h-full bg-amber-500"
+                      style={{ width: `${(cookingSessions / FREE_TIER_LIMITS.cookingSessionsPerMonth) * 100}%` }}
+                    />
+                  </View>
+                )}
+              </View>
             </View>
 
-            {!isSubscribed && (
-              <MenuItem 
-                icon={<Zap size={20} color="#f59e0b" />} 
-                label="Upgrade to Pro" 
-                onPress={showPaywall} 
-              />
-            )}
-            <MenuItem 
-              icon={<CreditCard size={20} color="#9ca3af" />} 
-              label="Billing & Plans (Cancel)" 
-              onPress={() => revenueCatService.manageSubscription()} 
-            />
+            <Pressable
+              onPress={handleRestore}
+              className="flex-row items-center justify-between py-4 active:opacity-60"
+            >
+              <View className="flex-row items-center">
+                <View className="w-10 h-10 rounded-xl bg-neutral-900 items-center justify-center mr-4">
+                  <RefreshCcw size={20} color="#9ca3af" />
+                </View>
+                <Text className="text-lg font-semibold text-white">Restore Subscription</Text>
+              </View>
+            </Pressable>
 
-            <Text className="text-neutral-500 text-xs font-bold uppercase tracking-widest mt-8 mb-2 px-1">
-              Preferences
-            </Text>
-            <MenuItem 
-              icon={<SettingsIcon size={20} color="#9ca3af" />} 
-              label="App Settings" 
-              onPress={() => {}} 
-            />
-            <MenuItem 
-              icon={<HelpCircle size={20} color="#9ca3af" />} 
-              label="Help & Support" 
-              onPress={() => {}} 
-            />
+            <Pressable
+              onPress={handleFeedback}
+              className="flex-row items-center justify-between py-4 active:opacity-60"
+            >
+              <View className="flex-row items-center">
+                <View className="w-10 h-10 rounded-xl bg-neutral-900 items-center justify-center mr-4">
+                  <Mail size={20} color="#9ca3af" />
+                </View>
+                <Text className="text-lg font-semibold text-white">Send Feedback</Text>
+              </View>
+            </Pressable>
 
-            <View className="mt-8 mb-10">
-              <MenuItem 
-                icon={<LogOut size={20} color="#ef4444" />} 
-                label="Logout" 
-                destructive
-                onPress={logout} 
-              />
+            <View className="h-[1px] bg-neutral-900 my-4" />
+
+            <Pressable
+              onPress={() => Linking.openURL("https://stepchef.app/terms")}
+              className="flex-row items-center justify-between py-4 active:opacity-60"
+            >
+              <View className="flex-row items-center">
+                <View className="w-10 h-10 rounded-xl bg-neutral-900 items-center justify-center mr-4">
+                  <FileText size={20} color="#6b7280" />
+                </View>
+                <Text className="text-lg font-semibold text-neutral-400">Terms of Service</Text>
+              </View>
+            </Pressable>
+
+            <Pressable
+              onPress={() => Linking.openURL("https://stepchef.app/privacy")}
+              className="flex-row items-center justify-between py-4 active:opacity-60"
+            >
+              <View className="flex-row items-center">
+                <View className="w-10 h-10 rounded-xl bg-neutral-900 items-center justify-center mr-4">
+                  <ShieldCheck size={20} color="#6b7280" />
+                </View>
+                <Text className="text-lg font-semibold text-neutral-400">Privacy Policy</Text>
+              </View>
+            </Pressable>
+
+            <View className="mt-8">
+              <Pressable
+                onPress={() => {
+                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                  logout();
+                }}
+                className="flex-row items-center justify-center bg-neutral-900 py-4 rounded-2xl border border-neutral-800 active:bg-neutral-800"
+              >
+                <LogOut size={20} color="#ef4444" className="mr-2" />
+                <Text className="text-red-500 font-bold text-lg ml-2">Logout</Text>
+              </Pressable>
             </View>
-          </View>
+
+            <View className="mt-10 items-center gap-1 opacity-40">
+              <Text className="text-neutral-500 text-xs font-medium">{user?.email}</Text>
+              <Text className="text-neutral-500 text-[10px] font-bold tracking-widest uppercase">Version 1.0.0</Text>
+            </View>
+
+          </Animated.View>
+
+          <View style={{ height: insets.bottom + 40 }} />
         </ScrollView>
       </View>
-
-      {/* Edit Profile Modal */}
-      <Modal
-        visible={showEditModal}
-        animationType="slide"
-        presentationStyle="pageSheet"
-        onRequestClose={() => setShowEditModal(false)}
-      >
-        <View
-          className="flex-1 bg-neutral-950"
-          style={{ paddingTop: insets.top }}
-        >
-          {/* Header */}
-          <View className="flex-row items-center justify-between px-5 py-6 border-b border-neutral-800">
-            <Text className="text-xl font-bold text-white">Edit Profile</Text>
-            <Pressable
-              onPress={() => {
-                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                setShowEditModal(false);
-              }}
-            >
-              <Text className="text-amber-500 font-semibold">Cancel</Text>
-            </Pressable>
-          </View>
-
-          {/* Content */}
-          <View className="flex-1 px-5 pt-8">
-            <Text className="text-neutral-400 font-semibold mb-2 ml-1">Username</Text>
-            <TextInput
-              value={editUsername}
-              onChangeText={setEditUsername}
-              placeholder="Enter username"
-              placeholderTextColor="#4b5563"
-              className="bg-neutral-900 rounded-2xl px-5 py-4 text-white text-base mb-6 border border-neutral-800"
-              autoFocus
-            />
-
-            <Text className="text-neutral-400 font-semibold mb-2 ml-1">Bio (Optional)</Text>
-            <TextInput
-              value={editBio}
-              onChangeText={setEditBio}
-              placeholder="Tell us about your culinary journey..."
-              placeholderTextColor="#4b5563"
-              multiline
-              numberOfLines={4}
-              className="bg-neutral-900 rounded-2xl px-5 py-4 text-white text-base mb-8 border border-neutral-800"
-              textAlignVertical="top"
-            />
-
-            <Pressable
-              onPress={handleSaveProfile}
-              disabled={!editUsername.trim()}
-              className={cn(
-                "bg-amber-500 rounded-2xl py-4 items-center justify-center shadow-lg",
-                !editUsername.trim() && "opacity-50"
-              )}
-            >
-              <Text className="text-black font-bold text-lg">
-                Save Changes
-              </Text>
-            </Pressable>
-          </View>
-        </View>
-      </Modal>
     </View>
   );
 }
-
