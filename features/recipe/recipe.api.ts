@@ -53,6 +53,14 @@ export const recipeApi = {
   },
 
   /**
+   * Extract a recipe from raw text.
+   * Throws 403 ApiError if daily limit is reached.
+   */
+  extractRecipeText: async (text: string, servings?: number): Promise<ExtractResponse> => {
+    return api.post('/recipe/extract-text', { text, servings });
+  },
+
+  /**
    * Get current usage statistics for the user across all features
    */
   getUsage: async (): Promise<DetailedUsage> => {

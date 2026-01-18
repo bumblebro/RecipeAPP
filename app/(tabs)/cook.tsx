@@ -5,13 +5,11 @@ import { ChefHat, Play, Clock, ArrowRight, Trash2 } from "lucide-react-native";
 import { useRouter } from "expo-router";
 import * as Haptics from "expo-haptics";
 import { useCookingStore } from "../../stores/useCookingStore";
-import { useExtractionStore } from "../../stores/useExtractionStore";
 import { cn } from "../../lib/cn";
 
 export default function CookScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
-  const { setAddModalVisible } = useExtractionStore();
   const { 
     recipe, 
     rawRecipeData, 
@@ -38,8 +36,8 @@ export default function CookScreen() {
 
   const handlePickRecipe = useCallback(() => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    setAddModalVisible(true);
-  }, [setAddModalVisible]);
+    router.push("/(tabs)/plus");
+  }, [router]);
 
   if (isActive && recipe) {
     const totalSteps = recipe.steps.length;
@@ -48,8 +46,8 @@ export default function CookScreen() {
     return (
       <View className="flex-1 bg-neutral-950">
         <View 
-          className="px-6 py-4 flex-row items-center justify-between border-b border-neutral-900"
-          style={{ paddingTop: insets.top }}
+          className="px-6 pt-8 pb-4 flex-row items-center justify-between border-b border-neutral-900"
+          style={{ paddingTop: insets.top + 20 }}
         >
           <View className="flex-row items-center">
             <View className="w-8 h-8 bg-amber-500 rounded-lg items-center justify-center mr-3">
@@ -127,9 +125,9 @@ export default function CookScreen() {
 
   return (
     <View className="flex-1 bg-neutral-950">
-      <View 
-          className="px-6 py-4 flex-row items-center border-b border-neutral-900"
-          style={{ paddingTop: insets.top }}
+        <View 
+          className="px-6 pt-8 pb-4 flex-row items-center border-b border-neutral-900"
+          style={{ paddingTop: insets.top + 20 }}
         >
           <View className="w-8 h-8 bg-neutral-900 rounded-lg items-center justify-center mr-3">
             <ChefHat size={18} color="#404040" strokeWidth={2.5} />

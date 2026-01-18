@@ -96,8 +96,8 @@ export default function SavedRecipesTab() {
   return (
     <View className="flex-1 bg-neutral-950">
       <View 
-        className="px-6 py-4 flex-row items-center justify-between border-b border-neutral-900"
-        style={{ paddingTop: insets.top }}
+        className="px-6 pt-8 pb-4 flex-row items-center justify-between border-b border-neutral-900"
+        style={{ paddingTop: insets.top + 20 }}
       >
         <View className="flex-row items-center">
           <View className="w-8 h-8 bg-amber-500 rounded-lg items-center justify-center mr-3 shadow-sm">

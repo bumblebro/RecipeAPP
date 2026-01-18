@@ -1,0 +1,54 @@
+{
+  "project_info": {
+    "project_number": "539559818790",
+    "project_id": "recipeapp-bcf8a",
+    "storage_bucket": "recipeapp-bcf8a.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:539559818790:android:e8c33f95ee3e5534b198e7",
+        "android_client_info": {
+          "package_name": "com.outvibe.RecipeAPP"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "539559818790-n4eemgobrt3efejvrb1r6v40pu2cv48p.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.outvibe.RecipeAPP",
+            "certificate_hash": "dc23131aa0739c80c9e81a9a45b69b96f37602e7"
+          }
+        },
+        {
+          "client_id": "539559818790-3p1mr8ebqp62t13s7ahgqgnqp5cnpuh8.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBh4VaOpN-SX9_mCjSxFpOfMlE3GSNL5i0"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "539559818790-3p1mr8ebqp62t13s7ahgqgnqp5cnpuh8.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "539559818790-df1baia3m51g8fjerl5sv7dlghu12pg9.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.outvibe.RecipeAPP"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

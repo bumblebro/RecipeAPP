@@ -9,13 +9,10 @@ import {
 } from "lucide-react-native";
 import { useState } from "react";
 import { View, Pressable, StyleSheet, Platform } from "react-native";
-import { AddRecipeOverlay } from "../../components/AddRecipeOverlay";
-import { useExtractionStore } from "../../stores/useExtractionStore";
 import * as Haptics from "expo-haptics";
 
 export default function TabLayout() {
   const colorScheme = useColorScheme();
-  const { isAddModalVisible, setAddModalVisible } = useExtractionStore();
 
   return (
     <>
@@ -27,8 +24,8 @@ export default function TabLayout() {
           tabBarStyle: {
             backgroundColor: "#0a0a0a",
             borderTopColor: "#262626",
-            paddingTop: 12,
-            height: Platform.OS === 'ios' ? 92 : 72,
+            paddingTop: 16,
+            height: Platform.OS === 'ios' ? 96 : 76,
             paddingBottom: Platform.OS === 'ios' ? 32 : 12,
           },
           tabBarLabelStyle: {
@@ -50,21 +47,8 @@ export default function TabLayout() {
         <Tabs.Screen
           name="plus"
           options={{
-            title: "",
-            tabBarButton: () => (
-              <View className="flex-1 items-center justify-center">
-                <Pressable
-                  onPress={() => {
-                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-                    setAddModalVisible(true);
-                  }}
-                  style={styles.floatingButton}
-                  className="bg-amber-500 shadow-lg shadow-amber-500/40"
-                >
-                  <Plus size={32} color="#000000" strokeWidth={3} />
-                </Pressable>
-              </View>
-            ),
+            title: "Import",
+            tabBarIcon: ({ color }) => <Plus size={24} color={color} />,
           }}
         />
 
@@ -90,24 +74,8 @@ export default function TabLayout() {
           }}
         />
       </Tabs>
-
-      <AddRecipeOverlay
-        isVisible={isAddModalVisible}
-        onClose={() => setAddModalVisible(false)}
-      />
     </>
   );
 }
 
-const styles = StyleSheet.create({
-  floatingButton: {
-    width: 60,
-    height: 60,
-    borderRadius: 30,
-    alignItems: "center",
-    justifyContent: "center",
-    marginBottom: Platform.OS === 'ios' ? 38 : 28,
-    borderWidth: 5,
-    borderColor: "#0a0a0a",
-  },
-});
+const styles = StyleSheet.create({});
