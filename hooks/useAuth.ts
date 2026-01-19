@@ -33,6 +33,7 @@ interface UseAuthReturn {
   loginWithApple: () => Promise<AuthResponse<AuthUser>>;
   logout: () => Promise<void>;
   resetPassword: (email: string) => Promise<AuthResponse<void>>;
+  deleteAccount: () => Promise<AuthResponse<void>>;
   clearError: () => void;
 }
 
@@ -213,6 +214,39 @@ export function useAuth(): UseAuthReturn {
     [setLoading, setError, clearError]
   );
 
+  /**
+   * Delete Account
+   */
+  const deleteAccount = useCallback(async (): Promise<AuthResponse<void>> => {
+    setLoading(true);
+    
+    // Call service to delete from Firebase
+    const result = await AuthService.deleteAccount();
+
+    if (result.error) {
+      setError(result.error);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+      setLoading(false);
+      return result;
+    }
+
+    // Success - Clear all local data
+    reset(); // Clear AuthStore
+    
+    // Clear all personalized stores
+    useSubscriptionStore.getState().clearSubscription();
+    useCookbookStore.getState().clearCookbook();
+    useCookingStore.getState().resetSession();
+    useSettingsStore.getState().clearSettings();
+    useUsageStore.getState().clearUsage();
+
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    router.replace('/(auth)/login' as any);
+    
+    setLoading(false);
+    return result;
+  }, [setLoading, setError, reset]);
+
   return {
     // State
     user,
@@ -229,6 +263,7 @@ export function useAuth(): UseAuthReturn {
     loginWithApple,
     logout,
     resetPassword,
+    deleteAccount,
     clearError,
   };
 }

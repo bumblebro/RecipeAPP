@@ -29,6 +29,7 @@ import { recipeApi } from "../../features/recipe/recipe.api";
 import { cn } from "../../lib/cn";
 import { usePaywall } from "../../lib/usePaywall";
 import { useShareIntent } from "expo-share-intent";
+import { useAlert } from "../../components/AlertProvider";
 
 interface Recipe {
   id: string;
@@ -65,6 +66,7 @@ export default function PlusTab() {
     "Staging the ingredients...",
     "Polishing the instructions..."
   ];
+  const { showAlert } = useAlert();
   const [loadingMessageIndex, setLoadingMessageIndex] = useState(0);
 
   useEffect(() => {
@@ -85,12 +87,20 @@ export default function PlusTab() {
     const targetText = recipeText;
     
     if (isLinkMode && !targetUrl.trim()) {
-      Alert.alert("Error", "Please paste a recipe link first.");
+      showAlert({
+        title: "Link Required",
+        message: "Please paste a recipe link first.",
+        type: "warning"
+      });
       return;
     }
 
     if (!isLinkMode && !targetText.trim()) {
-      Alert.alert("Error", "Please paste the recipe text first.");
+      showAlert({
+        title: "Text Required",
+        message: "Please paste the recipe text first.",
+        type: "warning"
+      });
       return;
     }
 
@@ -136,14 +146,22 @@ export default function PlusTab() {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } catch (e: any) {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+      
       if (e.response?.status === 403 && e.response?.data?.requiresUpgrade) {
         showPaywall();
         return;
       }
-      Alert.alert(
-        "Extraction Failed",
-        e.response?.data?.error || `Could not extract recipe from ${isLinkMode ? "URL" : "text"}. Please try again.`
-      );
+
+      const isLinkMode = importMode === "link";
+      const message = isLinkMode 
+        ? "We've noted this link! We'll work on supporting it soon. Please try another URL or paste the text directly."
+        : "We couldn't quite read that! We've noted the error. Please try another recipe or refine the text.";
+
+      showAlert({
+        title: "Almost there!",
+        message: message,
+        type: "info"
+      });
     } finally {
       setIsExtracting(false);
     }
@@ -274,7 +292,7 @@ export default function PlusTab() {
           </Text>
 
           <View className={cn(
-            "bg-neutral-950 rounded-2xl px-4 py-3 border border-neutral-800 mb-5",
+            "bg-neutral-900 rounded-2xl px-4 py-3 border border-neutral-800 mb-5",
             importMode === 'text' ? "h-40" : "flex-row items-center"
           )}>
             {importMode === 'link' ? (
@@ -282,21 +300,23 @@ export default function PlusTab() {
                 value={url}
                 onChangeText={setUrl}
                 placeholder="https://cooking-blog.com/recipe..."
-                placeholderTextColor="#4b5563"
+                placeholderTextColor="#737373"
                 className="flex-1 text-white text-base py-1"
                 autoCapitalize="none"
                 autoCorrect={false}
+                selectionColor="#f59e0b"
               />
             ) : (
               <TextInput
                 value={recipeText}
                 onChangeText={setRecipeText}
                 placeholder="1. Preheat oven to 350F...&#10;2. Mix 2 cups of flour..."
-                placeholderTextColor="#4b5563"
+                placeholderTextColor="#737373"
                 className="flex-1 text-white text-base py-1"
                 multiline
                 textAlignVertical="top"
                 autoCorrect={false}
+                selectionColor="#f59e0b"
               />
             )}
           </View>

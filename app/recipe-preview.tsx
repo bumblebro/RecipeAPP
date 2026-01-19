@@ -6,7 +6,6 @@ import {
   Pressable,
   Image,
   ActivityIndicator,
-  Alert,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useRouter, useLocalSearchParams } from "expo-router";
@@ -24,6 +23,7 @@ import { recipeApi } from "../features/recipe/recipe.api";
 import { useSavedRecipesStore } from "../stores/useSavedRecipesStore";
 import { cn } from "../lib/cn";
 import { usePaywall } from "../lib/usePaywall";
+import { useAlert } from "../components/AlertProvider";
 
 interface RecipeData {
   id?: string;
@@ -41,6 +41,7 @@ interface RecipeData {
 export default function RecipePreviewScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const { showAlert } = useAlert();
   const { recipe } = useLocalSearchParams<{ recipe: string }>();
   const { isSubscribed, validateCookingSession, checkCanSaveRecipe, showPaywall } = usePaywall();
 
@@ -82,16 +83,19 @@ export default function RecipePreviewScreen() {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } catch (error: any) {
       if (error.status === 403) {
-        Alert.alert(
-          "Limit Reached",
-          error.message || "You've reached your saved recipes limit.",
-          [
-            { text: 'Maybe Later', style: 'cancel' },
-            { text: 'Upgrade to Premium', onPress: showPaywall },
-          ]
-        );
+        showAlert({
+          title: "Limit Reached",
+          message: error.message || "You've reached your saved recipes limit.",
+          type: "warning",
+          secondaryButton: { text: 'Maybe Later' },
+          primaryButton: { text: 'Upgrade', onPress: showPaywall },
+        });
       } else {
-        Alert.alert("Error", "Failed to save recipe. Please try again.");
+        showAlert({
+          title: "Error",
+          message: "Failed to save recipe. Please try again.",
+          type: "error"
+        });
       }
     } finally {
       setIsSaving(false);

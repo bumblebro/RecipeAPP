@@ -21,7 +21,8 @@
       "googleServicesFile": "./GoogleService-Info.plist",
       "infoPlist": {
         "NSMicrophoneUsageDescription": "This app uses the microphone to listen for voice commands during cooking.",
-        "NSSpeechRecognitionUsageDescription": "This app uses speech recognition to process your voice commands."
+        "NSSpeechRecognitionUsageDescription": "This app uses speech recognition to process your voice commands.",
+        "NSPhotoLibraryUsageDescription": "This app needs access to your photo library to let you upload recipe photos and share your creations."
       }
     },
     "android": {
@@ -66,23 +67,34 @@
             "buildReactNativeFromSource": true
           }
         }
-      ],
-      [
-        "expo-share-intent",
-        {
-          "iosAppGroupIdentifier": "group.com.outvibe.stepchef",
-          "iosActivationRules": {
-            "NSExtensionActivationSupportsWebURLWithMaxCount": 1,
-            "NSExtensionActivationSupportsWebPageWithMaxCount": 1,
-            "NSExtensionActivationSupportsImageWithMaxCount": 1,
-            "NSExtensionActivationSupportsText": true
-          }
-        }
       ]
     ],
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "build": {
+          "experimental": {
+            "ios": {
+              "appExtensions": [
+                {
+                  "targetName": "ShareExtension",
+                  "bundleIdentifier": "com.outvibe.stepchef.share-extension",
+                  "entitlements": {
+                    "com.apple.security.application-groups": [
+                      "group.com.outvibe.stepchef"
+                    ]
+                  }
+                }
+              ]
+            }
+          }
+        },
+        "projectId": "c4cf0218-f787-45b9-8b1c-a19c390bcc03"
+      }
     }
   }
 }

@@ -27,8 +27,8 @@ export type { PurchasesPackage, CustomerInfo, PurchasesOffering } from 'react-na
 
 // RevenueCat API keys - REPLACE WITH YOUR ACTUAL KEYS
 const API_KEYS = {
-  ios: 'test_tMPtNwQxbxfBJHAlmlQVOaQZDIK',
-  android: 'test_tMPtNwQxbxfBJHAlmlQVOaQZDIK',
+  ios: process.env.EXPO_PUBLIC_REVENUECAT_IOS_API_KEY,
+  android: process.env.EXPO_PUBLIC_REVENUECAT_ANDROID_API_KEY,
 };
 
 // Entitlement identifier from RevenueCat dashboard
@@ -128,7 +128,7 @@ class RevenueCatService {
   async checkSubscriptionStatus(): Promise<boolean> {
     try {
       const customerInfo = await this.getCustomerInfo();
-      
+
       // Debug logging to find the correct Entitlement ID
       console.log('DEBUG: RevenueCat CustomerInfo:', JSON.stringify(customerInfo, null, 2));
       console.log('DEBUG: Active Entitlements:', Object.keys(customerInfo.entitlements.active));
@@ -136,21 +136,21 @@ class RevenueCatService {
 
       const activeEntitlements = Object.keys(customerInfo.entitlements.active);
       const activeSubscriptions = customerInfo.activeSubscriptions || [];
-      
+
       // Look for our specific entitlement ID
       const entitlement = customerInfo.entitlements.active[ENTITLEMENT_ID] || customerInfo.entitlements.active[activeEntitlements[0]];
-      
+
       // If we have an active entitlement OR an active subscription, consider it premium
       // (Fallback for missing entitlement-product link in dashboard)
       const isActive = activeEntitlements.length > 0 || activeSubscriptions.length > 0;
-      
+
       // Sync with backend (fire and forget)
       this.syncSubscription(isActive, entitlement?.expirationDate || null);
-      
+
       if (isActive) {
         console.log('DEBUG: Subscription is ACTIVE (Entitlements:', activeEntitlements.join(', '), '| Subs:', activeSubscriptions.join(', '), ')');
         useSubscriptionStore.getState().setSubscription(
-          'premium', 
+          'premium',
           entitlement?.expirationDate || null
         );
       } else {
@@ -204,30 +204,30 @@ class RevenueCatService {
    * Sync subscription status with our backend
    */
   private async syncSubscription(isActive: boolean, expirationDate: string | null) {
-      const plan = isActive ? 'premium' : 'free';
-      
-      // Prevent redundant syncs (Optimistic Check)
-      if (
-        this.lastSyncedPlan === plan && 
-        this.lastSyncedExpiration === expirationDate
-      ) {
-         return;
-      }
+    const plan = isActive ? 'premium' : 'free';
 
-      // Optimistically update tracking to block concurrent duplicate calls
-      const previousPlan = this.lastSyncedPlan;
-      const previousExpiration = this.lastSyncedExpiration;
-      
-      this.lastSyncedPlan = plan;
-      this.lastSyncedExpiration = expirationDate;
+    // Prevent redundant syncs (Optimistic Check)
+    if (
+      this.lastSyncedPlan === plan &&
+      this.lastSyncedExpiration === expirationDate
+    ) {
+      return;
+    }
+
+    // Optimistically update tracking to block concurrent duplicate calls
+    const previousPlan = this.lastSyncedPlan;
+    const previousExpiration = this.lastSyncedExpiration;
+
+    this.lastSyncedPlan = plan;
+    this.lastSyncedExpiration = expirationDate;
 
     try {
       // Dynamic import to avoid circular dependencies
       const { api } = await import('../features/api/api.client');
       const { useAuthStore } = await import('../stores/useAuthStore');
-      
+
       const isAuthenticated = useAuthStore.getState().isAuthenticated;
-      
+
       if (!isAuthenticated) {
         // Revert since we didn't actually sync
         this.lastSyncedPlan = previousPlan;
@@ -236,12 +236,12 @@ class RevenueCatService {
         return;
       }
 
-      await api.post('/user/sync-subscription', { 
+      await api.post('/user/sync-subscription', {
         plan,
-        expirationDate 
+        expirationDate
       });
       console.log('Synced subscription with backend:', plan);
-      
+
     } catch (error) {
       // Revert on failure so we retry next time
       this.lastSyncedPlan = previousPlan;

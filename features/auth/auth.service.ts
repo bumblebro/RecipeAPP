@@ -304,7 +304,38 @@ export async function logout(): Promise<AuthResponse<void>> {
     console.error('Logout error:', error);
     return errorResponse(error);
   }
+  }
+/**
+ * Delete the current user account
+ * This is a sensitive operation and may require re-authentication in some cases
+ */
+export async function deleteAccount(): Promise<AuthResponse<void>> {
+  try {
+    const user = auth().currentUser;
+
+    if (!user) {
+      throw { code: 'auth/no-current-user', message: 'No user signed in' };
+    }
+
+    await user.delete();
+
+    // Also sign out from Google if signed in
+    try {
+      const isGoogleSignedIn = await GoogleSignin.isSignedIn();
+      if (isGoogleSignedIn) {
+        await GoogleSignin.signOut();
+      }
+    } catch {
+      // Ignore Google sign-out errors
+    }
+
+    return { success: true, data: undefined, error: null };
+  } catch (error) {
+    console.error('Delete account error:', error);
+    return errorResponse(error);
+  }
 }
+
 
 /**
  * Get the current authenticated user
@@ -363,6 +394,7 @@ export const AuthService = {
   getCurrentUser,
   onAuthStateChanged,
   onIdTokenChanged,
+  deleteAccount,
 };
 
 export default AuthService;

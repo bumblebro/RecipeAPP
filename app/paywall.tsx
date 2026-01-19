@@ -1,5 +1,6 @@
 import React from 'react';
-import { View, Alert } from 'react-native';
+import { View } from 'react-native';
+import { useAlert } from '../components/AlertProvider';
 import { router } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import RevenueCatUI from 'react-native-purchases-ui';
@@ -7,6 +8,7 @@ import RevenueCatUI from 'react-native-purchases-ui';
 import { revenueCatService } from '../lib/revenuecat-service';
 
 export default function PaywallScreen() {
+  const { showAlert } = useAlert();
   return (
     <View className="flex-1 bg-black">
       <RevenueCatUI.Paywall 
@@ -26,10 +28,11 @@ export default function PaywallScreen() {
                 Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
                 router.back();
               } else {
-                Alert.alert(
-                  'Processing Purchase', 
-                  'Your purchase was successful but is still being processed. It should reflect in your account shortly.'
-                );
+                showAlert({
+                  title: 'Processing Purchase', 
+                  message: 'Your purchase was successful but is still being processed. It should reflect in your account shortly.',
+                  type: 'info'
+                });
                 router.back();
               }
             }, 2000);
@@ -40,10 +43,18 @@ export default function PaywallScreen() {
           
           if (isActive) {
             Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-            Alert.alert('Success', 'Your subscription has been restored!');
+            showAlert({
+              title: 'Success', 
+              message: 'Your subscription has been restored!',
+              type: 'success'
+            });
             router.back();
           } else {
-            Alert.alert('No Subscription Found', 'We could not find an active subscription.');
+            showAlert({
+              title: 'No Subscription Found', 
+              message: 'We could not find an active subscription.',
+              type: 'warning'
+            });
           }
         }}
         onDismiss={() => {

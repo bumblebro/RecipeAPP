@@ -322,13 +322,13 @@ const styles = StyleSheet.create({
     lineHeight: 20,
   },
   ingredientsList: {
-    gap: 16,
+    gap: 12,
   },
   ingredientItem: {
     flexDirection: "row",
     backgroundColor: "rgba(255,255,255,0.03)",
-    padding: 18,
-    borderRadius: 24, // softer list items
+    padding: 12,
+    borderRadius: 20, // slightly tighter border radius for tighter padding
     borderWidth: 1,
     borderColor: "rgba(255,255,255,0.05)",
     alignItems: "center",

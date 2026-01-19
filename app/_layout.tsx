@@ -15,6 +15,7 @@ import { useSubscriptionStore } from '../stores/useSubscriptionStore';
 import { useUsageStore, FREE_TIER_LIMITS } from '../stores/useUsageStore';
 import { revenueCatService } from '../lib/revenuecat-service';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { AlertProvider } from '../components/AlertProvider';
 
 import '../app/global.css';
 
@@ -121,43 +122,45 @@ export default function RootLayout() {
 
   return (
     <SafeAreaProvider>
-      <Stack
-        screenOptions={{
-          headerShown: false,
-          animation: 'fade',
-          contentStyle: {
-            backgroundColor: '#0a0a0a',
-          },
-        }}
-      >
-        <Stack.Screen name="(auth)" />
-        <Stack.Screen name="(tabs)" />
-        <Stack.Screen
-          name="recipe-preview"
-          options={{
-            animation: 'slide_from_right',
-          }}
-        />
-        <Stack.Screen
-          name="recipe"
-          options={{
-            title: "Cooking Mode",
-          }}
-        />
-        <Stack.Screen
-          name="serving-size"
-          options={{
-            title: "Serving Size",
-          }}
-        />
-        <Stack.Screen
-          name="paywall"
-          options={{
+      <AlertProvider>
+        <Stack
+          screenOptions={{
             headerShown: false,
-            animation: 'slide_from_right',
+            animation: 'fade',
+            contentStyle: {
+              backgroundColor: '#0a0a0a',
+            },
           }}
-        />
-      </Stack>
+        >
+          <Stack.Screen name="(auth)" />
+          <Stack.Screen name="(tabs)" />
+          <Stack.Screen
+            name="recipe-preview"
+            options={{
+              animation: 'slide_from_right',
+            }}
+          />
+          <Stack.Screen
+            name="recipe"
+            options={{
+              title: "Cooking Mode",
+            }}
+          />
+          <Stack.Screen
+            name="serving-size"
+            options={{
+              title: "Serving Size",
+            }}
+          />
+          <Stack.Screen
+            name="paywall"
+            options={{
+              headerShown: false,
+              animation: 'slide_from_right',
+            }}
+          />
+        </Stack>
+      </AlertProvider>
     </SafeAreaProvider>
   );
 }

@@ -5,9 +5,9 @@
 
 import { useCallback } from 'react';
 import { router } from 'expo-router';
-import { Alert } from 'react-native';
 import { useSubscriptionStore } from '../stores/useSubscriptionStore';
 import { useUsageStore, FREE_TIER_LIMITS } from '../stores/useUsageStore';
+import { useAlert } from '../components/AlertProvider';
 import { useCookbookStore } from '../stores/useCookbookStore';
 
 export function usePaywall() {
@@ -22,6 +22,7 @@ export function usePaywall() {
   const getRemainingExtractions = useUsageStore((s) => s.getRemainingExtractions);
   const getRemainingSessions = useUsageStore((s) => s.getRemainingSessions);
 
+  const { showAlert } = useAlert();
   // Cookbook store for saved recipes limit
   const recipes = useCookbookStore((s) => s.recipes);
   const savedRecipeCount = Object.keys(recipes).length;
@@ -48,14 +49,13 @@ export function usePaywall() {
     if (isSubscribed) return true;
 
     if (!canExtractRecipe()) {
-      Alert.alert(
-        'Monthly Limit Reached',
-        `You've used all ${FREE_TIER_LIMITS.recipeExtractionsPerMonth} free recipe extractions for this month. Upgrade to Premium for unlimited access!`,
-        [
-          { text: 'Maybe Later', style: 'cancel' },
-          { text: 'Upgrade', onPress: showPaywall },
-        ]
-      );
+      showAlert({
+        title: 'Monthly Limit Reached',
+        message: `You've used all ${FREE_TIER_LIMITS.recipeExtractionsPerMonth} free recipe extractions for this month. Upgrade to Premium for unlimited access!`,
+        type: 'warning',
+        secondaryButton: { text: 'Maybe Later' },
+        primaryButton: { text: 'Upgrade', onPress: showPaywall },
+      });
       return false;
     }
     return true;
@@ -86,14 +86,13 @@ export function usePaywall() {
     if (isSubscribed) return true;
 
     if (!canStartCookingSession()) {
-      Alert.alert(
-        'Monthly Limit Reached',
-        `You've used all ${FREE_TIER_LIMITS.cookingSessionsPerMonth} free cooking sessions for this month. Upgrade to Premium for unlimited access!`,
-        [
-          { text: 'Maybe Later', style: 'cancel' },
-          { text: 'Upgrade', onPress: showPaywall },
-        ]
-      );
+      showAlert({
+        title: 'Monthly Limit Reached',
+        message: `You've used all ${FREE_TIER_LIMITS.cookingSessionsPerMonth} free cooking sessions for this month. Upgrade to Premium for unlimited access!`,
+        type: 'warning',
+        secondaryButton: { text: 'Maybe Later' },
+        primaryButton: { text: 'Upgrade', onPress: showPaywall },
+      });
       return false;
     }
     return true;
@@ -115,14 +114,13 @@ export function usePaywall() {
     if (isSubscribed) return true;
 
     if (savedRecipeCount >= FREE_TIER_LIMITS.maxSavedRecipes) {
-      Alert.alert(
-        'Recipe Limit Reached',
-        `You can only save ${FREE_TIER_LIMITS.maxSavedRecipes} recipes on the free plan. Upgrade to Premium for unlimited saved recipes!`,
-        [
-          { text: 'Maybe Later', style: 'cancel' },
-          { text: 'Upgrade', onPress: showPaywall },
-        ]
-      );
+      showAlert({
+        title: 'Recipe Limit Reached',
+        message: `You can only save ${FREE_TIER_LIMITS.maxSavedRecipes} recipes on the free plan. Upgrade to Premium for unlimited saved recipes!`,
+        type: 'warning',
+        secondaryButton: { text: 'Maybe Later' },
+        primaryButton: { text: 'Upgrade', onPress: showPaywall },
+      });
       return false;
     }
 

@@ -6,9 +6,10 @@ import {
   ScrollView,
   Switch,
   Platform,
-  Alert,
   Linking,
 } from "react-native";
+import { useAlert } from "../../components/AlertProvider";
+
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Animated, { FadeInUp } from "react-native-reanimated";
 import { useRouter, useFocusEffect } from "expo-router";
@@ -41,7 +42,8 @@ export default function SettingsScreen() {
     setKeepScreenAwake,
   } = useSettingsStore();
 
-  const { logout, user } = useAuth();
+  const { logout, deleteAccount, user } = useAuth();
+  const { showAlert } = useAlert();
   const { isSubscribed, showPaywall } = usePaywall();
   const expirationDate = useSubscriptionStore(s => s.expirationDate);
   const { recipeExtractions, cookingSessions, syncWithBackend } = useUsageStore();
@@ -74,7 +76,7 @@ export default function SettingsScreen() {
 
   const handleFeedback = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    Linking.openURL("mailto:support@stepchef.app?subject=Feedback");
+    Linking.openURL("mailto:shreyasmadappady20@gmail.com?subject=Feedback");
   };
 
   return (
@@ -249,7 +251,7 @@ export default function SettingsScreen() {
             <View className="h-[1px] bg-neutral-900 my-4" />
 
             <Pressable
-              onPress={() => Linking.openURL("https://stepchef.app/terms")}
+              onPress={() => Linking.openURL("https://step-chef-website.vercel.app/terms")}
               className="flex-row items-center justify-between py-4 active:opacity-60"
             >
               <View className="flex-row items-center">
@@ -261,7 +263,7 @@ export default function SettingsScreen() {
             </Pressable>
 
             <Pressable
-              onPress={() => Linking.openURL("https://stepchef.app/privacy")}
+              onPress={() => Linking.openURL("https://step-chef-website.vercel.app/privacy")}
               className="flex-row items-center justify-between py-4 active:opacity-60"
             >
               <View className="flex-row items-center">
@@ -276,12 +278,42 @@ export default function SettingsScreen() {
               <Pressable
                 onPress={() => {
                   Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-                  logout();
+                  showAlert({
+                    title: "Logout",
+                    message: "Are you sure you want to log out of your account?",
+                    type: "warning",
+                    secondaryButton: { text: "Cancel" },
+                    primaryButton: { 
+                      text: "Logout",
+                      onPress: logout
+                    }
+                  });
                 }}
                 className="flex-row items-center justify-center bg-neutral-900 py-4 rounded-2xl border border-neutral-800 active:bg-neutral-800"
               >
                 <LogOut size={20} color="#ef4444" className="mr-2" />
                 <Text className="text-red-500 font-bold text-lg ml-2">Logout</Text>
+              </Pressable>
+            </View>
+
+            <View className="mt-4 mb-2">
+              <Pressable
+                onPress={() => {
+                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+                  showAlert({
+                    title: "Delete Account",
+                    message: "This will permanently delete your account and all saved data. This action cannot be undone.",
+                    type: "error",
+                    secondaryButton: { text: "Cancel" },
+                    primaryButton: {
+                      text: "Delete My Account",
+                      onPress: deleteAccount
+                    }
+                  });
+                }}
+                className="flex-row items-center justify-center py-2 opacity-60"
+              >
+                <Text className="text-red-500/80 font-medium text-sm">Delete Account</Text>
               </Pressable>
             </View>
 

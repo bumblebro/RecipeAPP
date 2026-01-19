@@ -14,12 +14,13 @@ import {
   StyleSheet,
   ActivityIndicator,
   ScrollView,
-  Alert,
   PanResponder,
   Dimensions,
   TextInput,
   Platform,
 } from "react-native";
+import { useAlert } from "../components/AlertProvider";
+
 import ConfettiCannon from "react-native-confetti-cannon";
 import {
   SafeAreaView,
@@ -331,6 +332,7 @@ interface RecipeScreenProps {
 export default function RecipeScreen({ recipe }: RecipeScreenProps) {
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const { showAlert } = useAlert();
 
   // Zustand store hooks
   const {
@@ -755,56 +757,54 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
 
     if (timerStillRunning && hasTimeRemaining) {
       // Show confirmation if timer is still running
-      Alert.alert(
-        "Timer Still Running",
-        `Are you sure? The timer still has ${formatTime(
+      showAlert({
+        title: "Timer Still Running",
+        message: `Are you sure? The timer still has ${formatTime(
           timeRemaining || 0
         )} remaining.`,
-        [
-          {
-            text: "Cancel",
-            style: "cancel",
-          },
-          {
-            text: "Complete Anyway",
-            style: "destructive",
-            onPress: () => {
-              // Pause timer in store if it's running
-              if (currentStepTimer) {
-                pauseStoreTimer(currentStepTimer.id);
-              }
-              setIsPaused(true);
+        type: "warning",
+        secondaryButton: {
+          text: "Cancel",
+        },
+        primaryButton: {
+          text: "Complete Anyway",
+          onPress: () => {
+            // Pause timer in store if it's running
+            if (currentStepTimer) {
+              pauseStoreTimer(currentStepTimer.id);
+            }
+            setIsPaused(true);
 
-              setIsStepComplete(true);
-              setCompletedSteps((prev) => {
-                if (!prev.includes(currentStepIndex)) {
-                  setStepCompleted(currentStepIndex, true);
-                  return [...prev, currentStepIndex];
-                }
-                return prev;
+            setIsStepComplete(true);
+            setCompletedSteps((prev) => {
+              if (!prev.includes(currentStepIndex)) {
+                setStepCompleted(currentStepIndex, true);
+                return [...prev, currentStepIndex];
+              }
+              return prev;
+            });
+
+            // Move to next step
+            if (
+              recipeData &&
+              recipeData.processedInstructions &&
+              currentStepIndex < recipeData.processedInstructions.length - 1
+            ) {
+              goToNextStep();
+              setIsStepComplete(false);
+              setIsTimerComplete(false);
+            } else {
+              // Last step completed
+              completeRecipe();
+              showAlert({
+                title: "Recipe Complete!",
+                message: "You've finished all the steps. Great job!",
+                type: "success"
               });
-
-              // Move to next step
-              if (
-                recipeData &&
-                recipeData.processedInstructions &&
-                currentStepIndex < recipeData.processedInstructions.length - 1
-              ) {
-                goToNextStep();
-                setIsStepComplete(false);
-                setIsTimerComplete(false);
-              } else {
-                // Last step completed
-                completeRecipe();
-                Alert.alert(
-                  "Recipe Complete!",
-                  "You've finished all the steps. Great job!"
-                );
-              }
-            },
+            }
           },
-        ]
-      );
+        },
+      });
     } else {
       // Timer is not running or has finished, complete normally
       setIsStepComplete(true);
@@ -815,6 +815,25 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
         }
         return prev;
       });
+
+      // Move to next step if possible
+      if (
+        recipeData &&
+        recipeData.processedInstructions &&
+        currentStepIndex < recipeData.processedInstructions.length - 1
+      ) {
+        goToNextStep();
+        setIsStepComplete(false);
+        setIsTimerComplete(false);
+      } else if (currentStepIndex === (recipeData?.processedInstructions?.length || 0) - 1) {
+        // Last step completed
+        completeRecipe();
+        showAlert({
+          title: "Recipe Complete!",
+          message: "You've finished all the steps. Great job!",
+          type: "success"
+        });
+      }
     }
   };
 
@@ -2832,9 +2851,12 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
                     </Pressable>
                     <Pressable
                       onPress={() => {
+                        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
                         resetSession();
-                        setShowCompletionScreen(false);
-                        startStep(0);
+                        router.replace({
+                          pathname: "/ingredients-needed",
+                          params: { recipe: JSON.stringify(recipeData) }
+                        });
                       }}
                       className="flex-1 h-14 bg-neutral-900 rounded-3xl items-center justify-center border border-neutral-800 active:bg-neutral-800"
                     >

@@ -6,9 +6,10 @@ import {
   ScrollView,
   Image,
   ActivityIndicator,
-  Alert,
   TextInput,
 } from "react-native";
+import { useAlert } from "../../components/AlertProvider";
+
 import { useRouter, useFocusEffect } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Animated, { FadeInDown, FadeOutRight } from "react-native-reanimated";
@@ -31,6 +32,7 @@ import { cn } from "../../lib/cn";
 export default function SavedRecipesTab() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const { showAlert } = useAlert();
   
   const { 
     recipes, 
@@ -63,27 +65,29 @@ export default function SavedRecipesTab() {
   );
 
   const handleDelete = useCallback(async (id: string, name: string) => {
-    Alert.alert(
-      "Delete Recipe",
-      `Are you sure you want to remove "${name}"?`,
-      [
-        { text: "Cancel", style: "cancel" },
-        { 
-          text: "Delete", 
-          style: "destructive",
-          onPress: async () => {
-             Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-             try {
-               await deleteFromStore(id);
-               Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-             } catch (error) {
-               Alert.alert("Error", "Failed to delete recipe.");
-             }
-          }
+    showAlert({
+      title: "Delete Recipe",
+      message: `Are you sure you want to remove "${name}"?`,
+      type: "warning",
+      secondaryButton: { text: "Cancel" },
+      primaryButton: { 
+        text: "Delete", 
+        onPress: async () => {
+           Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+           try {
+             await deleteFromStore(id);
+             Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+           } catch (error) {
+             showAlert({
+               title: "Error",
+               message: "Failed to delete recipe.",
+               type: "error"
+             });
+           }
         }
-      ]
-    );
-  }, []);
+      }
+    });
+  }, [showAlert, deleteFromStore]);
 
   const handleCook = useCallback((recipeData: any) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
