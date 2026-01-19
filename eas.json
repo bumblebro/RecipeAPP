@@ -16,6 +16,7 @@
       "env": {
         "EXPO_PUBLIC_API_URL": "https://stepchef.guidemyrecipe.com",
         "EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID": "539559818790-df1baia3m51g8fjerl5sv7dlghu12pg9.apps.googleusercontent.com",
+        "EXPO_PUBLIC_GOOGLE_API_KEY": "$EXPO_PUBLIC_GOOGLE_API_KEY",
         "EXPO_PUBLIC_REVENUECAT_IOS_API_KEY": "appl_BQqRqueCcwXHBAFMFXUDSuLdWmo",
         "EXPO_PUBLIC_REVENUECAT_ANDROID_API_KEY": "test_tMPtNwQxbxfBJHAlmlQVOaQZDIK"
       }
