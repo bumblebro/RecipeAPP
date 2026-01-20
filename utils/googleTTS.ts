@@ -3,7 +3,7 @@ import { Audio } from "expo-av";
 import { Platform } from "react-native";
 
 // Use the key from .env or fallback (User provided this key in .env)
-const GOOGLE_API_KEY = process.env.EXPO_PUBLIC_GOOGLE_API_KEY 
+const GOOGLE_API_KEY = process.env.EXPO_PUBLIC_GOOGLE_API_KEY
 
 const GOOGLE_TTS_URL = "https://texttospeech.googleapis.com/v1/text:synthesize";
 
@@ -38,11 +38,13 @@ export const synthesizeSpeech = async (text: string): Promise<string | null> => 
           languageCode: "en-US",
           // Wavenet voices are higher quality but require billing. 
           // Standard voices are: en-US-Standard-A, en-US-Standard-C (Female), etc.
-          name: "en-US-Standard-F", // Standard Female voice (Cheapest tier)
+          name: "en-US-Standard-G", // Standard Female voice (Cheapest tier)
           ssmlGender: "FEMALE",
         },
         audioConfig: {
           audioEncoding: "MP3",
+          "speaking_rate": 0.8,
+
         },
       }),
     });

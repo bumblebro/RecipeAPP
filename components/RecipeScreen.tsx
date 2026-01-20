@@ -1,4 +1,5 @@
 import { Audio } from 'expo-av';
+import { LinearGradient } from 'expo-linear-gradient';
 import React, {
   useState,
   useEffect,
@@ -235,9 +236,11 @@ const formatDuration = (duration: string): string => {
 };
 
 const formatTime = (seconds: number): string => {
-  const hours = Math.floor(seconds / 3600);
-  const minutes = Math.floor((seconds % 3600) / 60);
-  const secs = seconds % 60;
+  // Use Math.floor to ensure we only show whole seconds and handle floating point precision issues
+  const roundedSeconds = Math.floor(seconds);
+  const hours = Math.floor(roundedSeconds / 3600);
+  const minutes = Math.floor((roundedSeconds % 3600) / 60);
+  const secs = roundedSeconds % 60;
 
   if (hours > 0) {
     return `${hours}:${minutes.toString().padStart(2, "0")}:${secs
@@ -1577,10 +1580,21 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
         }
       },
       { match: ["add one minute", "add 1 minute", "minute extra"], action: () => handleAddMinute() },
+      {
+        match: ["show ingredients", "ingredients", "what ingredients", "list ingredients", "ingredients list", "view ingredients"],
+        action: () => setShowIngredientsModal(true)
+      },
+      {
+        match: ["close", "hide", "done", "dismiss", "exit modal"],
+        action: () => {
+          if (showIngredientsModal) setShowIngredientsModal(false);
+          if (showTimersModal) setShowTimersModal(false);
+        }
+      },
     ];
 
     for (const cmd of commands) {
-      if (cmd.match.some(m => text.includes(m))) {
+      if (cmd.match.some(m => text.toLowerCase().includes(m))) {
         lastCommandRef.current = now; // Set cooldown
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
 
@@ -1593,7 +1607,7 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
       }
     }
     return false;
-  }, [goToNextStep, goToPreviousStep, currentStepTimer, pauseStoreTimer, handleStartTimer, currentStep, playStepAudio, handleAddMinute, startStep, recipeData]);
+  }, [goToNextStep, goToPreviousStep, currentStepTimer, pauseStoreTimer, handleStartTimer, currentStep, playStepAudio, handleAddMinute, startStep, recipeData, setShowIngredientsModal, setShowTimersModal, showIngredientsModal, showTimersModal]);
 
   // Keep Ref in sync for listeners to stay stable
   useEffect(() => {
@@ -2384,11 +2398,7 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
             </Pressable>
             <Pressable
               onPress={handleNext}
-              className={`h-14 px-8 rounded-full items-center justify-center flex-row ${currentStepIndex ===
-                  (recipeData?.processedInstructions?.length || 1) - 1
-                  ? "bg-green-500"
-                  : "bg-amber-500"
-                } active:opacity-80`}
+              className="h-14 px-8 rounded-full items-center justify-center flex-row overflow-hidden active:opacity-80 bg-neutral-800"
               onPressIn={() => {
                 if (
                   currentStepIndex ===
@@ -2402,17 +2412,83 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
                 }
               }}
             >
-              <Text className="text-black font-bold text-lg">
-                {currentStepIndex ===
-                  (recipeData?.processedInstructions?.length || 1) - 1
-                  ? "Done!"
-                  : currentStep?.canDoNextStepInParallel
-                    ? "Next (Ready Now)"
+              {/* Sliding Background Color Animation */}
+              <AnimatePresence>
+                <MotiView
+                  key={currentStepIndex === (recipeData?.processedInstructions?.length || 1) - 1 
+                      ? "done" 
+                      : currentStep?.canDoNextStepInParallel ? "parallel" : "next"}
+                  from={{ translateX: -200, opacity: 0 }}
+                  animate={{ 
+                    translateX: 0, 
+                    opacity: 1,
+                    scale: currentStep?.canDoNextStepInParallel && currentStepIndex !== (recipeData?.processedInstructions?.length || 1) - 1
+                        ? [1, 1.05, 1] 
+                        : 1
+                  }}
+                  exit={{ translateX: 200, opacity: 0 }}
+                  transition={{ 
+                    type: 'timing', 
+                    duration: 450, 
+                    easing: Easing.out(Easing.quad),
+                    scale: {
+                      type: 'timing',
+                      duration: 1500,
+                      loop: true,
+                      easing: Easing.inOut(Easing.quad)
+                    }
+                  }}
+                  className="absolute inset-0"
+                  style={StyleSheet.absoluteFill}
+                >
+                  <LinearGradient
+                    colors={currentStepIndex === (recipeData?.processedInstructions?.length || 1) - 1
+                      ? ["#4ade80", "#16a34a"] // Vibrant Green for Done
+                      : currentStep?.canDoNextStepInParallel
+                        ? ["#fde047", "#f59e0b"] // Bright Yellow/Gold for Parallel
+                        : ["#fb923c", "#f97316"] // Pop Orange for Next
+                    }
+                    start={{ x: 0, y: 0 }}
+                    end={{ x: 1, y: 0.5 }}
+                    style={{ flex: 1 }}
+                  />
+                </MotiView>
+              </AnimatePresence>
+
+              {/* Shimmer for Parallel steps - More pronounced and continuous */}
+              {currentStep?.canDoNextStepInParallel && currentStepIndex !== (recipeData?.processedInstructions?.length || 1) - 1 && (
+                <MotiView
+                  from={{ translateX: -150 }}
+                  animate={{ translateX: 400 }}
+                  transition={{ 
+                    type: 'timing', 
+                    duration: 2000, 
+                    loop: true, 
+                    easing: Easing.linear,
+                    repeatReverse: false
+                  }}
+                  className="absolute inset-0 z-0"
+                  style={{
+                    width: 80,
+                    height: "300%",
+                    backgroundColor: "rgba(255, 255, 255, 0.3)",
+                    transform: [{ rotate: "25deg" }],
+                    top: -50
+                  }}
+                />
+              )}
+
+              <View className="items-center justify-center z-10 relative">
+                <Text className="text-black font-bold text-xl leading-tight">
+                  {currentStepIndex ===
+                    (recipeData?.processedInstructions?.length || 1) - 1
+                    ? "Done!"
                     : "Next"}
-              </Text>
+                </Text>
+              </View>
               {currentStepIndex !==
                 (recipeData?.processedInstructions?.length || 1) - 1 && (
-                  <ChevronRight size={24} color="#000000" className="ml-1" />
+                  <ChevronRight size={22} color="#000000" className="ml-2 z-10" />
                 )}
             </Pressable>
           </View>

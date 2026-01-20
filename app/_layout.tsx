@@ -5,12 +5,21 @@
 
 import { useEffect, useState } from 'react';
 import { View, ActivityIndicator } from 'react-native';
-import { Stack, useRouter, useSegments } from 'expo-router';
+import { Stack, useRouter,  useSegments,
+} from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { useFonts } from 'expo-font';
-import { Roboto_400Regular, Roboto_500Medium, Roboto_700Bold } from '@expo-google-fonts/roboto';
+import {
+  Roboto_400Regular,
+  Roboto_500Medium,
+  Roboto_700Bold,
+} from '@expo-google-fonts/roboto';
 
-import { useAuthStore, initializeAuthListener } from '../stores/useAuthStore';
+import {
+  useAuthStore,
+  initializeAuthListener,
+} from '../stores/useAuthStore';
+import { useSettingsStore } from '../stores/useSettingsStore';
 import { revenueCatService } from '../lib/revenuecat-service';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { AlertProvider } from '../components/AlertProvider';
@@ -27,6 +36,7 @@ SplashScreen.preventAutoHideAsync();
  */
 function useProtectedRoute() {
   const { isAuthenticated, isInitialized } = useAuthStore();
+  const { hasCompletedOnboarding } = useSettingsStore();
   const segments = useSegments();
   const router = useRouter();
 
@@ -34,18 +44,26 @@ function useProtectedRoute() {
     // Wait until auth state is initialized
     if (!isInitialized) return;
 
-    const inAuthGroup = (segments[0] as string) === '(auth)';
+    const inAuthGroup = segments[0] === '(auth)';
+    const isOnboarding = segments[0] === 'onboarding';
 
     if (!isAuthenticated && !inAuthGroup) {
       // User is not signed in and trying to access protected route
       // Redirect to login
       router.replace('/(auth)/login' as any);
-    } else if (isAuthenticated && inAuthGroup) {
-      // User is signed in but still in auth group
-      // Redirect to main app
-      router.replace('/(tabs)');
+    } else if (isAuthenticated) {
+      if (!hasCompletedOnboarding && !isOnboarding) {
+        // Authenticated but hasn't done onboarding
+        router.replace('/onboarding' as any);
+      } else if (hasCompletedOnboarding && (inAuthGroup || isOnboarding)) {
+        // Authenticated and done onboarding, but in auth/onboarding group
+        router.replace('/(tabs)');
+      } else if (!hasCompletedOnboarding && inAuthGroup) {
+        // Authenticated, not done onboarding, but in auth group
+        router.replace('/onboarding' as any);
+      }
     }
-  }, [isAuthenticated, isInitialized, segments]);
+  }, [isAuthenticated, isInitialized, segments, hasCompletedOnboarding]);
 }
 
 export default function RootLayout() {
@@ -118,6 +136,7 @@ export default function RootLayout() {
         >
           <Stack.Screen name="(auth)" />
           <Stack.Screen name="(tabs)" />
+          <Stack.Screen name="onboarding" />
           <Stack.Screen
             name="recipe-preview"
             options={{
