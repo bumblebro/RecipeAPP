@@ -15,6 +15,12 @@ node_modules/
 .env.production.local
 
 # ===============================
+# Build ipa and aab
+# ===============================
+build-*.ipa
+build-*.aab
+
+# ===============================
 # Logs
 # ===============================
 npm-debug.log*

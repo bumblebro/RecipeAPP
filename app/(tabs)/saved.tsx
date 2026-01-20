@@ -109,15 +109,7 @@ export default function SavedRecipesTab() {
           </View>
           <Text className="text-xl font-bold text-white">Saved</Text>
         </View>
-        <Pressable 
-          onPress={() => {
-            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-            router.push("/(tabs)/profile");
-          }}
-          className="w-10 h-10 rounded-full bg-neutral-900 items-center justify-center border border-neutral-800 active:bg-neutral-800"
-        >
-          <Settings size={20} color="#9ca3af" />
-        </Pressable>
+
       </View>
 
       {/* Search Bar */}

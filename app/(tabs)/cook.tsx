@@ -139,27 +139,29 @@ export default function CookScreen() {
         className="flex-1 items-center justify-center px-6"
         style={{ paddingBottom: insets.bottom }}
       >
-        <View className="w-24 h-24 rounded-full bg-neutral-900 items-center justify-center mb-6">
-          <ChefHat size={48} color="#262626" />
-        </View>
-        
-        <Text className="text-2xl font-bold text-white mb-2 text-center">
-          Ready to cook?
-        </Text>
-        
-        <Text className="text-neutral-400 text-center mb-8">
-          Select a recipe to start cooking or extract a new one from a link.
-        </Text>
-
-        <Pressable
-          onPress={handlePickRecipe} 
-          className="w-full bg-amber-500 rounded-xl py-4 flex-row items-center justify-center active:opacity-80 shadow-lg shadow-amber-500/20"
-        >
-          <Play size={20} color="#000000" fill="#000000" />
-          <Text className="text-black font-bold text-lg ml-2">
-            Pick a Recipe
+        <View className="w-full max-w-sm bg-neutral-900 rounded-[32px] p-8 items-center border border-neutral-800 shadow-2xl">
+          <View className="w-16 h-16 rounded-full bg-neutral-800 items-center justify-center mb-6">
+            <ChefHat size={32} color="#525252" />
+          </View>
+          
+          <Text className="text-xl font-bold text-white mb-3 text-center">
+            No Active Session
           </Text>
-        </Pressable>
+          
+          <Text className="text-neutral-500 text-center mb-8 leading-relaxed">
+            Ready to whip up something delicious? Select a recipe to get started.
+          </Text>
+
+          <Pressable
+            onPress={handlePickRecipe} 
+            className="w-full bg-amber-500 rounded-2xl py-4 flex-row items-center justify-center active:opacity-90"
+          >
+            <Play size={18} color="#000000" fill="#000000" />
+            <Text className="text-black font-bold text-base ml-2">
+              Start Cooking
+            </Text>
+          </Pressable>
+        </View>
       </View>
     </View>
   );

@@ -21,19 +21,20 @@ import {
   RefreshCcw,
   Mail,
   Zap,
-  LogOut,
   ShieldCheck,
   FileText,
   ChevronRight,
+  User,
 } from "lucide-react-native";
-import { useAuth } from "../../hooks/useAuth";
+// import { useAuth } from "../../hooks/useAuth"; // logic moved to account-info
 import { useSettingsStore } from "../../stores/useSettingsStore";
 import { useSubscriptionStore } from "../../stores/useSubscriptionStore";
 import { useUsageStore, FREE_TIER_LIMITS } from "../../stores/useUsageStore";
 import { revenueCatService } from "../../lib/revenuecat-service";
 import { usePaywall } from "../../lib/usePaywall";
 
-export default function SettingsScreen() {
+export default function AccountScreen() {
+  const router = useRouter();
   const insets = useSafeAreaInsets();
   const {
     voiceEnabled,
@@ -42,7 +43,7 @@ export default function SettingsScreen() {
     setKeepScreenAwake,
   } = useSettingsStore();
 
-  const { logout, deleteAccount, user } = useAuth();
+  // const { logout, deleteAccount, user } = useAuth();
   const { showAlert } = useAlert();
   const { isSubscribed, showPaywall } = usePaywall();
   const expirationDate = useSubscriptionStore(s => s.expirationDate);
@@ -90,7 +91,7 @@ export default function SettingsScreen() {
         <ScrollView className="flex-1 px-6" showsVerticalScrollIndicator={false}>
           {/* Header */}
           <View className="py-8">
-            <Text className="text-3xl font-bold text-white">Settings</Text>
+            <Text className="text-3xl font-bold text-white">Account</Text>
           </View>
 
           {/* Preferences Section */}
@@ -274,53 +275,23 @@ export default function SettingsScreen() {
               </View>
             </Pressable>
 
-            <View className="mt-8">
-              <Pressable
-                onPress={() => {
-                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-                  showAlert({
-                    title: "Logout",
-                    message: "Are you sure you want to log out of your account?",
-                    type: "warning",
-                    secondaryButton: { text: "Cancel" },
-                    primaryButton: { 
-                      text: "Logout",
-                      onPress: logout
-                    }
-                  });
-                }}
-                className="flex-row items-center justify-center bg-neutral-900 py-4 rounded-2xl border border-neutral-800 active:bg-neutral-800"
-              >
-                <LogOut size={20} color="#ef4444" className="mr-2" />
-                <Text className="text-red-500 font-bold text-lg ml-2">Logout</Text>
-              </Pressable>
-            </View>
+            <View className="h-[1px] bg-neutral-900 my-4" />
 
-            <View className="mt-4 mb-2">
-              <Pressable
-                onPress={() => {
-                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
-                  showAlert({
-                    title: "Delete Account",
-                    message: "This will permanently delete your account and all saved data. This action cannot be undone.",
-                    type: "error",
-                    secondaryButton: { text: "Cancel" },
-                    primaryButton: {
-                      text: "Delete My Account",
-                      onPress: deleteAccount
-                    }
-                  });
-                }}
-                className="flex-row items-center justify-center py-2 opacity-60"
-              >
-                <Text className="text-red-500/80 font-medium text-sm">Delete Account</Text>
-              </Pressable>
-            </View>
-
-            <View className="mt-10 items-center gap-1 opacity-40">
-              <Text className="text-neutral-500 text-xs font-medium">{user?.email}</Text>
-              <Text className="text-neutral-500 text-[10px] font-bold tracking-widest uppercase">Version 1.0.0</Text>
-            </View>
+            <Pressable
+              onPress={() => {
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                router.push("/account-info");
+              }}
+              className="flex-row items-center justify-between py-4 active:opacity-60"
+            >
+              <View className="flex-row items-center">
+                <View className="w-10 h-10 rounded-xl bg-neutral-900 items-center justify-center mr-4">
+                  <User size={20} color="#9ca3af" />
+                </View>
+                <Text className="text-lg font-semibold text-white">Account Information</Text>
+              </View>
+              <ChevronRight size={20} color="#525252" />
+            </Pressable>
 
           </Animated.View>
 

@@ -87,9 +87,9 @@ android {
     buildToolsVersion rootProject.ext.buildToolsVersion
     compileSdk rootProject.ext.compileSdkVersion
 
-    namespace 'com.outvibe.RecipeAPP'
+    namespace 'com.outvibe.stepchef'
     defaultConfig {
-        applicationId 'com.outvibe.RecipeAPP'
+        applicationId 'com.outvibe.stepchef'
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 1

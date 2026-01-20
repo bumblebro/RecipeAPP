@@ -1,4 +1,4 @@
-package com.outvibe.RecipeAPP
+package com.outvibe.stepchef
 import expo.modules.splashscreen.SplashScreenManager
 
 import android.os.Build

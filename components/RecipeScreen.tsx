@@ -83,6 +83,8 @@ import {
 
 
 
+import PermissionRequestModal from "./PermissionRequestModal";
+
 const { width: SCREEN_WIDTH } = Dimensions.get("window");
 
 // Constants
@@ -1598,9 +1600,17 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
     handleVoiceCommandRef.current = handleVoiceCommand;
   }, [handleVoiceCommand]);
 
+  // Permission Gate
+  const [isPermissionChecked, setIsPermissionChecked] = useState(false);
+
   // Stable Voice Recognition Listeners
   useEffect(() => {
-    if (!isVoiceEnabled) {
+    // Determine if we should even attempt to start voice
+    // 1. Feature must be enabled in settings
+    // 2. We must have checked (and potentially granted) permissions
+    const shouldStartVoice = isVoiceEnabled && isPermissionChecked;
+
+    if (!shouldStartVoice) {
       Voice.stop().catch(() => { });
       return;
     }
@@ -1621,7 +1631,8 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
 
     Voice.onSpeechEnd = () => {
       setIsListening(false);
-      if (isVoiceEnabled) {
+      // Only restart if still allowed
+      if (isVoiceEnabled && isPermissionChecked) {
         setTimeout(startVoice, 500);
       }
     };
@@ -1632,7 +1643,8 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
         console.log("Voice Error:", e);
       }
       setIsListening(false);
-      if (isVoiceEnabled) {
+      // Only restart if still allowed
+      if (isVoiceEnabled && isPermissionChecked) {
         setTimeout(startVoice, 1000);
       }
     };
@@ -1656,8 +1668,77 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
     return () => {
       Voice.destroy().then(Voice.removeAllListeners);
     };
-    // Dependency array is minimal to prevent redundant re-renders
-  }, [isVoiceEnabled]);
+    // Dependency array - restart if enabled status or permission checked status changes
+  }, [isVoiceEnabled, isPermissionChecked]);
+
+
+  // Permission Handling
+  const [showPermissionModal, setShowPermissionModal] = useState(false);
+
+  useEffect(() => {
+    const checkPermissions = async () => {
+      // Only check if voice feature is actually enabled in settings
+      // If disabled in settings, we don't care about permissions yet
+      if (!isVoiceEnabled) {
+        setIsPermissionChecked(false);
+        return;
+      }
+
+      try {
+        const { status } = await Audio.getPermissionsAsync();
+        
+        if (status === 'granted') {
+          // All good, ungate the voice loop
+          setIsPermissionChecked(true);
+        } else if (status === 'undetermined') {
+          // Needs user action, but don't disable the setting, just block the start
+          // Show our explanation modal
+          setIsPermissionChecked(false); // Gate remains closed
+          setShowPermissionModal(true);
+        } else {
+            // Denied previously
+             setIsPermissionChecked(false); 
+             // Optional: could alert user here or just fail silently until they toggle
+        }
+      } catch (e) {
+        console.log("Error checking permissions:", e);
+        setIsPermissionChecked(false);
+      }
+    };
+
+    checkPermissions();
+  }, [settingsVoiceEnabled]); // Run when settings change or mount
+
+  const handleGrantPermissions = async () => {
+    try {
+      const { status } = await Audio.requestPermissionsAsync();
+      if (status === 'granted') {
+        setShowPermissionModal(false);
+        setIsPermissionChecked(true); // Open the gate!
+      } else {
+        // User denied in system dialog
+        setShowPermissionModal(false);
+        setIsPermissionChecked(false);
+        setIsVoiceEnabled(false); // Now we disable it because they explicitly said no
+        showAlert({
+          title: "Voice Control Disabled",
+          message: "You can enable microphone access in your device settings later.",
+          type: "info",
+        });
+      }
+    } catch (e) {
+      console.log("Error requesting permissions:", e);
+      setShowPermissionModal(false);
+      setIsPermissionChecked(false);
+    }
+  };
+
+  const handleDenyPermissions = () => {
+    setShowPermissionModal(false);
+    setIsVoiceEnabled(false);
+    // Optionally update the store setting if you want to remember this preference persistently
+    // setVoiceEnabled(false); 
+  };
 
 
 
@@ -2869,6 +2950,12 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
           </View>
         </Animated.View>
       )}
+      {/* Permission Modal */}
+      <PermissionRequestModal
+        visible={showPermissionModal}
+        onGrant={handleGrantPermissions}
+        onCancel={handleDenyPermissions}
+      />
     </Animated.View>
   );
 }
