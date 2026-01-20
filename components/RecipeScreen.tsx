@@ -663,7 +663,7 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
   }, [recipeData, currentStepIndex, goToPreviousStep]);
 
   // Swipe gesture handling logic (without visual horizontal translation as requested)
-  const swipeThreshold = SCREEN_WIDTH * 0.35; 
+  const swipeThreshold = SCREEN_WIDTH * 0.35;
   const translateX = useSharedValue(0); // Kept for potential future use or non-intrusive feedback
   const isSwiping = useSharedValue(false);
 
@@ -1388,19 +1388,20 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
 
   const playStepAudio = useCallback(async (text: string) => {
     // Increment ID to cancel any previous pending operations
+
     const requestId = ++audioRequestId.current;
 
     try {
       // Stop previous audio
       await stopAudio();
-      
+
       if (requestId !== audioRequestId.current) return;
 
       if (!text) return;
 
       setIsPlaying(true);
       const audioUri = await synthesizeSpeech(text);
-      
+
       // Check if this request is still valid after async operation
       if (requestId !== audioRequestId.current) return;
 
@@ -1409,11 +1410,11 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
           { uri: audioUri },
           { shouldPlay: true }
         );
-        
+
         // Final check before assigning/playing
         if (requestId !== audioRequestId.current) {
-             await sound.unloadAsync();
-             return;
+          await sound.unloadAsync();
+          return;
         }
 
         soundRef.current = sound;
@@ -1444,14 +1445,14 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
           // Mark as spoken
           spokenStepsRef.current.add(currentStepIndex);
         }, 500);
-        
+
         // Cleanup function handles interruption
         return () => {
-             clearTimeout(timer);
-             // Verify we should definitely stop audio when switching steps
-             stopAudio();
-             // Invalidate any pending loads from this step
-             audioRequestId.current++;
+          clearTimeout(timer);
+          // Verify we should definitely stop audio when switching steps
+          stopAudio();
+          // Invalidate any pending loads from this step
+          audioRequestId.current++;
         };
       }
     } else {
@@ -1491,27 +1492,27 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
     const stepMatch = text.match(/(?:go to |jump to |move to )?step\s+(\w+|\d+)/);
     if (stepMatch) {
       let stepNum = parseInt(stepMatch[1], 10);
-      
+
       // Handle word numbers (limiting to common recipe step counts)
       if (isNaN(stepNum)) {
-        const wordMap: {[key: string]: number} = {
+        const wordMap: { [key: string]: number } = {
           "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10,
           "eleven": 11, "twelve": 12, "thirteen": 13, "fourteen": 14, "fifteen": 15, "twenty": 20
         };
         stepNum = wordMap[stepMatch[1]] || 0;
       }
-      
+
       const totalSteps = recipeData?.processedInstructions?.length || 0;
-      
+
       if (stepNum > 0 && stepNum <= totalSteps) {
-         lastCommandRef.current = now;
-         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-         Voice.stop().catch(e => console.log("Voice stop error:", e));
-         setPartialTranscript("");
-         
-         // Convert to 0-based index
-         startStep(stepNum - 1);
-         return true;
+        lastCommandRef.current = now;
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        Voice.stop().catch(e => console.log("Voice stop error:", e));
+        setPartialTranscript("");
+
+        // Convert to 0-based index
+        startStep(stepNum - 1);
+        return true;
       }
     }
 
@@ -1522,11 +1523,11 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
           // Find the first running timer
           const runningTimer = timers.find(t => t.isRunning && !t.isComplete);
           if (runningTimer) {
-             const stepIdMatch = runningTimer.stepId.match(/step-(\d+)/);
-             if (stepIdMatch) {
-               const stepIndex = parseInt(stepIdMatch[1], 10);
-               startStep(stepIndex);
-             }
+            const stepIdMatch = runningTimer.stepId.match(/step-(\d+)/);
+            if (stepIdMatch) {
+              const stepIndex = parseInt(stepIdMatch[1], 10);
+              startStep(stepIndex);
+            }
           }
         }
       },
@@ -1543,29 +1544,29 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
       {
         match: ["restart", "restart timer", "reset timer"], action: () => {
           if (currentStepTimer) {
-             resetStoreTimer(currentStepTimer.id);
-             Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+            resetStoreTimer(currentStepTimer.id);
+            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
           }
         }
       },
       {
         match: ["break", "kitchen break", "take a break", "pause cooking", "hold on"],
         action: () => {
-             if (!isGlobalPaused) {
-                 toggleGlobalPause();
-                 Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-             }
+          if (!isGlobalPaused) {
+            toggleGlobalPause();
+            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+          }
         }
       },
-      { 
+      {
         match: ["resume", "resume cooking", "resume timer", "continue timer", "continue", "back to cooking"], action: () => {
           // If global pause is active, resume cooking
           if (isGlobalPaused) {
-              toggleGlobalPause();
-              Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-              return;
+            toggleGlobalPause();
+            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+            return;
           }
-          
+
           // If timer is paused, this will resume it (handleStartTimer toggles)
           if (currentStepTimer && !currentStepTimer.isRunning && !currentStepTimer.isComplete) {
             handleStartTimer();
@@ -1700,7 +1701,7 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
 
       try {
         const { status } = await Audio.getPermissionsAsync();
-        
+
         if (status === 'granted') {
           // All good, ungate the voice loop
           setIsPermissionChecked(true);
@@ -1710,9 +1711,9 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
           setIsPermissionChecked(false); // Gate remains closed
           setShowPermissionModal(true);
         } else {
-            // Denied previously
-             setIsPermissionChecked(false); 
-             // Optional: could alert user here or just fail silently until they toggle
+          // Denied previously
+          setIsPermissionChecked(false);
+          // Optional: could alert user here or just fail silently until they toggle
         }
       } catch (e) {
         console.log("Error checking permissions:", e);
@@ -1972,8 +1973,8 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
                       }
                     }}
                     className={`flex-row items-center border rounded-full px-4 py-2 ${isCurrentStep
-                        ? "bg-amber-500 border-amber-600"
-                        : "bg-amber-500/10 border-amber-500/30"
+                      ? "bg-amber-500 border-amber-600"
+                      : "bg-amber-500/10 border-amber-500/30"
                       }`}
                   >
                     <Timer size={18} color={isCurrentStep ? "#000000" : "#f59e0b"} />
@@ -2002,10 +2003,10 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
                   startStep(index);
                 }}
                 className={`${isCurrent
-                    ? "w-8 h-2 bg-amber-500 rounded-full"
-                    : isCompleted
-                      ? "w-2 h-2 bg-amber-500/50 rounded-full"
-                      : "w-2 h-2 bg-neutral-700 rounded-full"
+                  ? "w-8 h-2 bg-amber-500 rounded-full"
+                  : isCompleted
+                    ? "w-2 h-2 bg-amber-500/50 rounded-full"
+                    : "w-2 h-2 bg-neutral-700 rounded-full"
                   }`}
               />
             );
@@ -2218,8 +2219,8 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
                 >
                   {currentStepTimer && !isTimerRunning && !isTimerComplete && currentStepTimer.remainingSeconds < currentStepTimer.totalSeconds ? (
                     <View className="flex-row gap-3 mt-2">
-                       {/* Resume Button */}
-                       <Pressable
+                      {/* Resume Button */}
+                      <Pressable
                         onPress={handleStartTimer}
                         className="flex-1 bg-amber-500 rounded-2xl px-4 py-4 active:opacity-80 items-center justify-center flex-row"
                         onPressIn={() => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium)}
@@ -2238,17 +2239,17 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
                         className="bg-neutral-800 border border-neutral-700 rounded-2xl px-4 py-4 active:bg-neutral-700 items-center justify-center"
                         onPressIn={() => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium)}
                       >
-                         <RotateCcw size={22} color="#ffffff" />
+                        <RotateCcw size={22} color="#ffffff" />
                       </Pressable>
                     </View>
                   ) : (
                     <Pressable
                       onPress={handleStartTimer}
                       className={`rounded-2xl px-6 py-4 mt-2 ${isTimerComplete
-                          ? "bg-green-500"
-                          : isTimerRunning
-                            ? "bg-neutral-800 border border-amber-500/50"
-                            : "bg-amber-500"
+                        ? "bg-green-500"
+                        : isTimerRunning
+                          ? "bg-neutral-800 border border-amber-500/50"
+                          : "bg-amber-500"
                         } active:opacity-80`}
                       onPressIn={() =>
                         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium)
@@ -2272,10 +2273,10 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
                         )}
                         <Text
                           className={`text-lg font-semibold ${isTimerComplete
-                              ? "text-black"
-                              : isTimerRunning
-                                ? "text-neutral-300"
-                                : "text-black"
+                            ? "text-black"
+                            : isTimerRunning
+                              ? "text-neutral-300"
+                              : "text-black"
                             }`}
                         >
                           {isTimerComplete
@@ -2415,21 +2416,21 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
               {/* Sliding Background Color Animation */}
               <AnimatePresence>
                 <MotiView
-                  key={currentStepIndex === (recipeData?.processedInstructions?.length || 1) - 1 
-                      ? "done" 
-                      : currentStep?.canDoNextStepInParallel ? "parallel" : "next"}
+                  key={currentStepIndex === (recipeData?.processedInstructions?.length || 1) - 1
+                    ? "done"
+                    : currentStep?.canDoNextStepInParallel ? "parallel" : "next"}
                   from={{ translateX: -200, opacity: 0 }}
-                  animate={{ 
-                    translateX: 0, 
+                  animate={{
+                    translateX: 0,
                     opacity: 1,
                     scale: currentStep?.canDoNextStepInParallel && currentStepIndex !== (recipeData?.processedInstructions?.length || 1) - 1
-                        ? [1, 1.05, 1] 
-                        : 1
+                      ? [1, 1.05, 1]
+                      : 1
                   }}
                   exit={{ translateX: 200, opacity: 0 }}
-                  transition={{ 
-                    type: 'timing', 
-                    duration: 450, 
+                  transition={{
+                    type: 'timing',
+                    duration: 450,
                     easing: Easing.out(Easing.quad),
                     scale: {
                       type: 'timing',
@@ -2445,8 +2446,8 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
                     colors={currentStepIndex === (recipeData?.processedInstructions?.length || 1) - 1
                       ? ["#4ade80", "#16a34a"] // Vibrant Green for Done
                       : currentStep?.canDoNextStepInParallel
-                        ? ["#fde047", "#f59e0b"] // Bright Yellow/Gold for Parallel
-                        : ["#fb923c", "#f97316"] // Pop Orange for Next
+                        ? ["#fde047", "#f59e0b"] // Bright Yellow for Parallel
+                        : ["#fde047", "#f59e0b"] // Consistent Yellow for Next
                     }
                     start={{ x: 0, y: 0 }}
                     end={{ x: 1, y: 0.5 }}
@@ -2460,10 +2461,10 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
                 <MotiView
                   from={{ translateX: -150 }}
                   animate={{ translateX: 400 }}
-                  transition={{ 
-                    type: 'timing', 
-                    duration: 2000, 
-                    loop: true, 
+                  transition={{
+                    type: 'timing',
+                    duration: 2000,
+                    loop: true,
                     easing: Easing.linear,
                     repeatReverse: false
                   }}
@@ -2483,7 +2484,9 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
                   {currentStepIndex ===
                     (recipeData?.processedInstructions?.length || 1) - 1
                     ? "Done!"
-                    : "Next"}
+                    : currentStep?.canDoNextStepInParallel
+                      ? "Skip Step"
+                      : "Next Step"}
                 </Text>
               </View>
               {currentStepIndex !==
@@ -2658,8 +2661,8 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
                             >
                               <View
                                 className={`w-6 h-6 rounded-full border-2 items-center justify-center mr-3 ${isUsed
-                                    ? "bg-green-500 border-green-500"
-                                    : "border-neutral-600"
+                                  ? "bg-green-500 border-green-500"
+                                  : "border-neutral-600"
                                   }`}
                               >
                                 {isUsed && (
@@ -2669,8 +2672,8 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
                               <View className="flex-1">
                                 <Text
                                   className={`${isUsed
-                                      ? "text-neutral-500 line-through"
-                                      : "text-white"
+                                    ? "text-neutral-500 line-through"
+                                    : "text-white"
                                     } text-base`}
                                 >
                                   {ingredient.name}
@@ -2711,16 +2714,16 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
                         >
                           <View
                             className={`w-6 h-6 rounded-full border-2 items-center justify-center mr-3 ${isUsed
-                                ? "bg-green-500 border-green-500"
-                                : "border-neutral-600"
+                              ? "bg-green-500 border-green-500"
+                              : "border-neutral-600"
                               }`}
                           >
                             {isUsed && <CheckCircle2 size={16} color="#ffffff" />}
                           </View>
                           <Text
                             className={`flex-1 ${isUsed
-                                ? "text-neutral-500 line-through"
-                                : "text-white"
+                              ? "text-neutral-500 line-through"
+                              : "text-white"
                               } text-base`}
                           >
                             {ingredient}
@@ -2781,10 +2784,10 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
                       <View
                         key={timer.id}
                         className={`rounded-2xl p-4 mb-4 border ${isComplete
-                            ? "bg-green-500/10 border-green-500/30"
-                            : isRunning
-                              ? "bg-amber-500/10 border-amber-500/30"
-                              : "bg-neutral-800/50 border-neutral-700/50"
+                          ? "bg-green-500/10 border-green-500/30"
+                          : isRunning
+                            ? "bg-amber-500/10 border-amber-500/30"
+                            : "bg-neutral-800/50 border-neutral-700/50"
                           }`}
                       >
                         {/* Timer Label */}
@@ -2802,10 +2805,10 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
                           />
                           <Text
                             className={`text-base font-semibold ${isComplete
-                                ? "text-green-400"
-                                : isRunning
-                                  ? "text-amber-400"
-                                  : "text-white"
+                              ? "text-green-400"
+                              : isRunning
+                                ? "text-amber-400"
+                                : "text-white"
                               }`}
                           >
                             {timer.label}
@@ -2815,10 +2818,10 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
                         {/* Timer Display */}
                         <Text
                           className={`text-4xl font-mono font-bold text-center mb-4 ${isComplete
-                              ? "text-green-400"
-                              : isRunning
-                                ? "text-amber-400"
-                                : "text-white"
+                            ? "text-green-400"
+                            : isRunning
+                              ? "text-amber-400"
+                              : "text-white"
                             }`}
                         >
                           {formatTime(timer.remainingSeconds)}
@@ -2828,10 +2831,10 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
                         <View className="h-1.5 bg-neutral-700 rounded-full overflow-hidden mb-4">
                           <View
                             className={`h-full rounded-full ${isComplete
-                                ? "bg-green-500"
-                                : isRunning
-                                  ? "bg-amber-500"
-                                  : "bg-neutral-600"
+                              ? "bg-green-500"
+                              : isRunning
+                                ? "bg-amber-500"
+                                : "bg-neutral-600"
                               }`}
                             style={{ width: `${progress}%` }}
                           />
