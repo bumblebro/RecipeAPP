@@ -36,13 +36,13 @@ SplashScreen.preventAutoHideAsync();
  */
 function useProtectedRoute() {
   const { isAuthenticated, isInitialized } = useAuthStore();
-  const { hasCompletedOnboarding } = useSettingsStore();
+  const { hasCompletedOnboarding, _hasHydrated } = useSettingsStore();
   const segments = useSegments();
   const router = useRouter();
 
   useEffect(() => {
-    // Wait until auth state is initialized
-    if (!isInitialized) return;
+    // Wait until auth state is initialized and settings are hydrated
+    if (!isInitialized || !_hasHydrated) return;
 
     const inAuthGroup = segments[0] === '(auth)';
     const isOnboarding = segments[0] === 'onboarding';
@@ -57,13 +57,11 @@ function useProtectedRoute() {
         router.replace('/onboarding' as any);
       } else if (hasCompletedOnboarding && (inAuthGroup || isOnboarding)) {
         // Authenticated and done onboarding, but in auth/onboarding group
+        // If we were just finishing onboarding, this will take us back to tabs
         router.replace('/(tabs)');
-      } else if (!hasCompletedOnboarding && inAuthGroup) {
-        // Authenticated, not done onboarding, but in auth group
-        router.replace('/onboarding' as any);
       }
     }
-  }, [isAuthenticated, isInitialized, segments, hasCompletedOnboarding]);
+  }, [isAuthenticated, isInitialized, _hasHydrated, segments, hasCompletedOnboarding]);
 }
 
 export default function RootLayout() {

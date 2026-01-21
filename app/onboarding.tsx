@@ -50,7 +50,6 @@ export default function OnboardingScreen() {
   const handleFinish = () => {
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     setHasCompletedOnboarding(true);
-    router.replace('/(tabs)/plus');
   };
 
   const scrollRef = useRef<Animated.ScrollView>(null);
