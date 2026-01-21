@@ -38,7 +38,7 @@ export const synthesizeSpeech = async (text: string): Promise<string | null> => 
           languageCode: "en-US",
           // Wavenet voices are higher quality but require billing. 
           // Standard voices are: en-US-Standard-A, en-US-Standard-C (Female), etc.
-          name: "en-US-Standard-C", // Standard Female voice (Cheapest tier)
+          name: "en-US-Standard-F", // Standard Female voice (Cheapest tier)
           ssmlGender: "FEMALE",
         },
         audioConfig: {
