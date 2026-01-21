@@ -1,4 +1,4 @@
-import { Audio } from 'expo-av';
+import { Audio, InterruptionModeIOS, InterruptionModeAndroid } from 'expo-av';
 import { LinearGradient } from 'expo-linear-gradient';
 import React, {
   useState,
@@ -38,6 +38,7 @@ import { synthesizeSpeech } from "../utils/googleTTS";
 import Voice from '@react-native-voice/voice';
 import { Volume2, VolumeX } from "lucide-react-native";
 import { useSettingsStore } from "../stores/useSettingsStore";
+import { usePaywall } from "../lib/usePaywall";
 import Animated, {
   useAnimatedStyle,
   useSharedValue,
@@ -338,6 +339,7 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { showAlert } = useAlert();
+  const { isSubscribed, showPaywall } = usePaywall();
 
   // Zustand store hooks
   const {
@@ -640,6 +642,13 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
       setIsStepComplete(true);
       completeRecipe();
       setShowCompletionScreen(true);
+      
+      // Delay paywall by 3 seconds if not subscribed
+      if (!isSubscribed) {
+        setTimeout(() => {
+          showPaywall();
+        }, 3000);
+      }
       return;
     }
 
@@ -1634,6 +1643,24 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
       if (isVoiceStartingRef.current) return;
       try {
         isVoiceStartingRef.current = true;
+        
+        // Explicitly set audio mode for iOS to allow concurrent recording and playback
+        if (Platform.OS === 'ios') {
+          try {
+            await Audio.setAudioModeAsync({
+              allowsRecordingIOS: true,
+              playsInSilentModeIOS: true,
+              staysActiveInBackground: true,
+              interruptionModeIOS: InterruptionModeIOS.DoNotMix,
+              shouldDuckAndroid: true,
+              interruptionModeAndroid: InterruptionModeAndroid.DoNotMix,
+              playThroughEarpieceAndroid: false,
+            });
+          } catch (audioError) {
+            console.log("Audio mode configuration error:", audioError);
+          }
+        }
+
         await Voice.start('en-US');
       } catch (e) {
         console.log("Voice start error helper:", e);

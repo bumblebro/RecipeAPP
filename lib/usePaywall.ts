@@ -67,17 +67,9 @@ export function usePaywall() {
   const recordSuccessfulExtraction = useCallback(() => {
     if (isSubscribed) return;
 
-    // Check if this is the first extraction before incrementing
-    const isFirstExtraction = useUsageStore.getState().recipeExtractions === 0;
-    const success = incrementRecipeExtractions();
-
-    if (success && isFirstExtraction) {
-      // Show paywall after a short delay so user can see the extraction result first
-      setTimeout(() => {
-        showPaywall();
-      }, 1500);
-    }
-  }, [isSubscribed, showPaywall, incrementRecipeExtractions]);
+    // Increment common usage
+    incrementRecipeExtractions();
+  }, [isSubscribed, incrementRecipeExtractions]);
 
   /**
    * Validate if user can start a cooking session (check limit only)
