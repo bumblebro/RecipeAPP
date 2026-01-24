@@ -208,6 +208,7 @@ interface RecipeData {
   keywords?: string[];
   selectedServings?: number; // Selected serving size from serving-size screen
   originalServings?: number; // Original serving size from recipe
+  scaledIngredients?: Ingredient[]; // Already-scaled ingredients from backend
   nutrition?: {
     calories?: string;
     proteinContent?: string;
@@ -430,6 +431,12 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
   // TTS State
   const [isTTSEnabled, setIsTTSEnabled] = useState(true);
   const [isPlaying, setIsPlaying] = useState(false);
+  const isPlayingRef = useRef(false);
+  const voiceRestartNeededRef = useRef(false); // Track if voice should restart after audio
+  const voiceStoppedForAudioRef = useRef(false); // Track if we've already stopped voice for current audio
+  useEffect(() => {
+    isPlayingRef.current = isPlaying;
+  }, [isPlaying]);
   const soundRef = useRef<Audio.Sound | null>(null);
   const playedTimerAlerts = useRef<Set<string>>(new Set());
   const spokenStepsRef = useRef<Set<number>>(new Set());
@@ -1088,7 +1095,17 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
 
   // Memoize all unique ingredients from all steps
   const allIngredients = useMemo(() => {
+    // If we have already-scaled ingredients from the backend, use them
+    if (recipeData && recipeData.scaledIngredients && recipeData.scaledIngredients.length > 0) {
+      return recipeData.scaledIngredients;
+    }
+
     const ingredientsMap = new Map<string, Ingredient>();
+    // The backend process-recipe API already scales ingredients in processedInstructions
+    // So for these, the scale factor is always 1
+    const scaleFactorForProcessed = 1;
+    // For raw ingredients, we need to calculate the scale factor
+    const scaleFactorForRaw = originalServings > 0 ? currentServings / originalServings : 1;
 
     // First, collect ingredients from processed instructions (these are the most reliable)
     if (recipeData && recipeData.processedInstructions) {
@@ -1125,7 +1142,9 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
           // Use normalized name for the key
           const key = `${normalizedName}-${ingredient.preparation || ""}`;
           if (!ingredientsMap.has(key)) {
-            ingredientsMap.set(key, { ...ingredient, name: normalizedName });
+            // Apply scaleFactorForProcessed (which is 1)
+            const scaledQty = ingredient.quantity !== null ? ingredient.quantity * scaleFactorForProcessed : null;
+            ingredientsMap.set(key, { ...ingredient, name: normalizedName, quantity: scaledQty });
           } else {
             const existing = ingredientsMap.get(key)!;
             if (
@@ -1133,7 +1152,7 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
               existing.quantity !== null &&
               ingredient.quantity !== null
             ) {
-              existing.quantity += ingredient.quantity;
+              existing.quantity += ingredient.quantity * scaleFactorForProcessed;
             }
           }
         });
@@ -1174,12 +1193,15 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
         const key = `${name}-`;
         // Only add if not already in map (processed instructions take priority)
         if (!ingredientsMap.has(key)) {
+          // Note: for raw ingredients where we don't have a quantity parsed yet, 
+          // they will stay as quantity: null. 
+          // If we wanted to scale the string, we'd need a parser here.
           ingredientsMap.set(key, { name, quantity: null, unit: null });
         }
       });
     }
 
-    const scaledIngredients = Array.from(ingredientsMap.values())
+    const ingredientsList = Array.from(ingredientsMap.values())
       .filter((ing) => {
         // Final validation - must be a valid ingredient object
         if (!ing || !ing.name || typeof ing.name !== "string") return false;
@@ -1197,15 +1219,9 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
         if (/^[A-Z][^.!?]*[.!?]$/.test(trimmedName)) return false;
 
         return true;
-      })
-      .map((ing) => {
-        if (ing.quantity !== null && originalServings > 0) {
-          const scaleFactor = currentServings / originalServings;
-          return { ...ing, quantity: ing.quantity * scaleFactor };
-        }
-        return ing;
       });
-    return scaledIngredients;
+
+    return ingredientsList;
   }, [recipeData, currentServings, originalServings]);
 
   // Memoize ingredients needed for current step (scaled)
@@ -1217,8 +1233,9 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
     )
       return new Set();
 
-    const scaleFactor =
-      originalServings > 0 ? currentServings / originalServings : 1;
+    // The backend process-recipe API already scales ingredients in processedInstructions
+    // So for these, the scale factor is always 1
+    const scaleFactor = 1;
 
     return new Set(
       recipeData.processedInstructions[currentStepIndex]?.ingredients?.map(
@@ -1229,7 +1246,7 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
         }
       ) || []
     );
-  }, [recipeData, currentStepIndex, currentServings, originalServings]);
+  }, [recipeData, currentStepIndex]);
 
   // Calculate step progress
   const stepProgress = useMemo(() => {
@@ -1408,7 +1425,19 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
 
       if (!text) return;
 
+      // Update ref synchronously BEFORE stopping voice to prevent race condition
+      isPlayingRef.current = true;
       setIsPlaying(true);
+      voiceStoppedForAudioRef.current = false; // Reset for new audio session
+      
+      // Stop voice recognition while we speak
+      try {
+        await Voice.stop();
+        voiceStoppedForAudioRef.current = true;
+      } catch (voiceError) {
+        // Voice might not be running, that's okay
+      }
+      
       const audioUri = await synthesizeSpeech(text);
 
       // Check if this request is still valid after async operation
@@ -1431,14 +1460,33 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
         sound.setOnPlaybackStatusUpdate((status) => {
           if (status.isLoaded && status.didJustFinish) {
             setIsPlaying(false);
+            isPlayingRef.current = false;
+            voiceStoppedForAudioRef.current = false; // Reset for next audio
+            
+            // Restart voice recognition after audio finishes, if needed
+            // Use current values via settings store to avoid stale closures
+            const shouldRestart = voiceRestartNeededRef.current;
+            if (shouldRestart) {
+              voiceRestartNeededRef.current = false;
+              setTimeout(() => {
+                // Double-check voice is still enabled and not playing before restart
+                if (!isPlayingRef.current) {
+                  Voice.start('en-US').catch((err) => {
+                    console.log("Voice restart after audio error:", err);
+                  });
+                }
+              }, 300);
+            }
           }
         });
       } else {
         setIsPlaying(false);
+        isPlayingRef.current = false;
       }
     } catch (error) {
       console.log("Error playing audio:", error);
       setIsPlaying(false);
+      isPlayingRef.current = false;
     }
   }, [stopAudio]);
 
@@ -1627,8 +1675,42 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
   // Permission Gate
   const [isPermissionChecked, setIsPermissionChecked] = useState(false);
 
-  // Stable Voice Recognition Listeners
-  useEffect(() => {
+    // 1. One-time setup of audio mode when voice is enabled
+    useEffect(() => {
+      if (isVoiceEnabled && isPermissionChecked && Platform.OS === 'ios') {
+        const setupAudioMode = async () => {
+          try {
+            await Audio.setAudioModeAsync({
+              allowsRecordingIOS: true,
+              playsInSilentModeIOS: true,
+              staysActiveInBackground: true,
+              interruptionModeIOS: InterruptionModeIOS.MixWithOthers,
+              shouldDuckAndroid: true,
+              interruptionModeAndroid: InterruptionModeAndroid.DuckOthers,
+              playThroughEarpieceAndroid: false,
+              // @ts-ignore - explicitly set to false to match categories
+              playThroughEarpieceIOS: false, 
+            });
+          } catch (audioError) {
+            console.log("Audio mode configuration error:", audioError);
+          }
+        };
+        setupAudioMode();
+      }
+    }, [isVoiceEnabled, isPermissionChecked]);
+
+    // Watchdog: Force stop voice if it's somehow running while audio is playing
+    // Only stop once per audio session to prevent callback loops
+    useEffect(() => {
+      if (isPlaying && !voiceStoppedForAudioRef.current) {
+        // Audio just started playing and we haven't stopped voice yet
+        Voice.stop().catch(() => {});
+        voiceStoppedForAudioRef.current = true;
+      }
+    }, [isPlaying]);
+
+    // 2. Stable Voice Recognition Loop
+    useEffect(() => {
     // Determine if we should even attempt to start voice
     // 1. Feature must be enabled in settings
     // 2. We must have checked (and potentially granted) permissions
@@ -1641,24 +1723,27 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
 
     const startVoice = async () => {
       if (isVoiceStartingRef.current) return;
+      
+      // Don't start listening if we're currently speaking an instruction
+      // This prevents the app from hearing itself and causing session conflicts
+      if (isPlayingRef.current) {
+        console.log("Postponing voice start as audio is playing");
+        setTimeout(startVoice, 1000);
+        return;
+      }
+
       try {
         isVoiceStartingRef.current = true;
         
-        // Explicitly set audio mode for iOS to allow concurrent recording and playback
+        // Ensure small buffer for iOS session stability
         if (Platform.OS === 'ios') {
-          try {
-            await Audio.setAudioModeAsync({
-              allowsRecordingIOS: true,
-              playsInSilentModeIOS: true,
-              staysActiveInBackground: true,
-              interruptionModeIOS: InterruptionModeIOS.DoNotMix,
-              shouldDuckAndroid: true,
-              interruptionModeAndroid: InterruptionModeAndroid.DoNotMix,
-              playThroughEarpieceAndroid: false,
-            });
-          } catch (audioError) {
-            console.log("Audio mode configuration error:", audioError);
-          }
+          await new Promise(resolve => setTimeout(resolve, 200));
+        }
+        
+        // Final check before starting - ensure audio hasn't started in the meantime
+        if (isPlayingRef.current) {
+          console.log("Audio started during voice initialization, aborting");
+          return;
         }
 
         await Voice.start('en-US');
@@ -1673,9 +1758,14 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
 
     Voice.onSpeechEnd = () => {
       setIsListening(false);
-      // Only restart if still allowed
+      // Only restart if still allowed AND not currently playing audio
       if (isVoiceEnabled && isPermissionChecked) {
-        setTimeout(startVoice, 500);
+        if (!isPlayingRef.current) {
+          setTimeout(startVoice, 500);
+        } else {
+          // Mark that we need to restart after audio finishes
+          voiceRestartNeededRef.current = true;
+        }
       }
     };
 
@@ -1685,9 +1775,14 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
         console.log("Voice Error:", e);
       }
       setIsListening(false);
-      // Only restart if still allowed
+      // Only restart if still allowed AND not currently playing audio
       if (isVoiceEnabled && isPermissionChecked) {
-        setTimeout(startVoice, 1000);
+        if (!isPlayingRef.current) {
+          setTimeout(startVoice, 1000);
+        } else {
+          // Mark that we need to restart after audio finishes
+          voiceRestartNeededRef.current = true;
+        }
       }
     };
 
@@ -2123,10 +2218,9 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
                           return !isInstructionLike(ing.name);
                         })
                         .map((ingredient, index) => {
-                          const scaleFactor =
-                            originalServings > 0
-                              ? currentServings / originalServings
-                              : 1;
+                          // The backend process-recipe API already scales ingredients in processedInstructions
+                          // So for these, the scale factor is always 1
+                          const scaleFactor = 1;
                           const scaledQuantity =
                             ingredient.quantity !== null
                               ? ingredient.quantity * scaleFactor
@@ -2665,10 +2759,9 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
                           return !isInstructionLike(ing.name);
                         })
                         .map((ingredient, index) => {
-                          const scaleFactor =
-                            originalServings > 0
-                              ? currentServings / originalServings
-                              : 1;
+                          // The backend process-recipe API already scales ingredients in processedInstructions
+                          // So for these, the scale factor is always 1
+                          const scaleFactor = 1;
                           const scaledQuantity =
                             ingredient.quantity !== null
                               ? ingredient.quantity * scaleFactor
@@ -2721,20 +2814,20 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
                   )}
 
                 {/* Other Ingredients Section */}
-                {recipeData?.ingredients && recipeData.ingredients.length > 0 && (
+                {allIngredients && allIngredients.length > 0 && (
                   <View>
                     <Text className="text-neutral-500 text-sm font-medium uppercase tracking-wide mb-3">
-                      Other Ingredients
+                      All Ingredients
                     </Text>
-                    {recipeData.ingredients.map((ingredient, index) => {
-                      const ingredientId = `ing-${ingredient
+                    {allIngredients.map((ingredient, index) => {
+                      const ingredientId = `ing-${ingredient.name
                         .toLowerCase()
-                        .replace(/\s+/g, "-")}`;
+                        .replace(/\s+/g, "-")}-${ingredient.quantity || ingredient.unit || ""}`;
                       const isUsed = usedIngredientIds.includes(ingredientId);
 
                       return (
                         <Pressable
-                          key={`ing-other-${index}`}
+                          key={`ing-all-${index}`}
                           onPress={() => toggleIngredient(ingredientId)}
                           className={`flex-row items-center px-4 py-3 rounded-xl mb-2 ${isUsed ? "bg-green-500/10" : "bg-neutral-800/50"
                             }`}
@@ -2747,14 +2840,23 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
                           >
                             {isUsed && <CheckCircle2 size={16} color="#ffffff" />}
                           </View>
-                          <Text
-                            className={`flex-1 ${isUsed
-                              ? "text-neutral-500 line-through"
-                              : "text-white"
-                              } text-base`}
-                          >
-                            {ingredient}
-                          </Text>
+                          <View className="flex-1">
+                            <Text
+                              className={`${isUsed
+                                ? "text-neutral-500 line-through"
+                                : "text-white"
+                                } text-base`}
+                            >
+                              {ingredient.name}
+                            </Text>
+                            {(ingredient.quantity !== null || ingredient.unit) && (
+                              <Text className="text-neutral-400 text-sm">
+                                {ingredient.quantity
+                                  ? `${formatQuantity(ingredient.quantity)}${ingredient.unit ? ` ${ingredient.unit}` : ""}`
+                                  : ingredient.unit || ""}
+                              </Text>
+                            )}
+                          </View>
                         </Pressable>
                       );
                     })}

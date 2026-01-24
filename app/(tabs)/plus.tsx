@@ -22,8 +22,10 @@ import {
   ArrowRight,
   Users,
   Quote,
-  Type
+  Type,
+  Clipboard
 } from "lucide-react-native";
+import * as ExpoClipboard from 'expo-clipboard';
 import { useExtractionStore } from '../../stores/useExtractionStore';
 import { recipeApi } from "../../features/recipe/recipe.api";
 import { cn } from "../../lib/cn";
@@ -167,6 +169,18 @@ export default function PlusTab() {
     }
   }, [url, recipeText, importMode, isSubscribed, validateRecipeExtraction, recordSuccessfulExtraction, showPaywall, router, setIsExtracting]);
 
+  const handlePaste = useCallback(async () => {
+    const text = await ExpoClipboard.getStringAsync();
+    if (text) {
+      if (importMode === 'link') {
+        setUrl(text);
+      } else {
+        setRecipeText(text);
+      }
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    }
+  }, [importMode]);
+
   const intentLock = React.useRef(false);
 
   useEffect(() => {
@@ -292,7 +306,7 @@ export default function PlusTab() {
           </Text>
 
           <View className={cn(
-            "bg-neutral-900 rounded-2xl px-4 py-3 border border-neutral-800 mb-5",
+            "bg-neutral-900 rounded-2xl px-4 py-3 border border-neutral-800 mb-5 relative",
             importMode === 'text' ? "h-40" : "flex-row items-center"
           )}>
             {importMode === 'link' ? (
@@ -319,6 +333,16 @@ export default function PlusTab() {
                 selectionColor="#f59e0b"
               />
             )}
+            
+            <Pressable
+              onPress={handlePaste}
+              className={cn(
+                "w-10 h-10 rounded-xl bg-neutral-800 items-center justify-center border border-neutral-700 active:bg-neutral-700",
+                importMode === 'text' && "absolute bottom-3 right-3"
+              )}
+            >
+              <Clipboard size={18} color="#f59e0b" />
+            </Pressable>
           </View>
 
           <Pressable

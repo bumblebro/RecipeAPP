@@ -43,7 +43,7 @@ export const synthesizeSpeech = async (text: string): Promise<string | null> => 
         },
         audioConfig: {
           audioEncoding: "MP3",
-          "speaking_rate": 0.8,
+          // "speaking_rate": 0.8,
 
         },
       }),

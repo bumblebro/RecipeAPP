@@ -233,7 +233,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "space-between",
     paddingHorizontal: 20,
-    paddingVertical: 15,
+    paddingVertical: 10,
   },
   iconButton: {
     width: 44,
@@ -278,17 +278,18 @@ const styles = StyleSheet.create({
   },
   progressContainer: {
     backgroundColor: "rgba(255,255,255,0.03)",
-    padding: 20,
-    borderRadius: 24,
-    marginBottom: 20,
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    borderRadius: 20,
+    marginBottom: 12,
     borderWidth: 1,
     borderColor: "rgba(255,255,255,0.05)",
   },
   progressText: {
     color: "#ffffff",
-    fontSize: 16,
+    fontSize: 14,
     fontWeight: "700",
-    marginBottom: 12,
+    marginBottom: 8,
   },
   progressBarBg: {
     height: 10,
@@ -304,11 +305,12 @@ const styles = StyleSheet.create({
   infoCard: {
     flexDirection: "row",
     backgroundColor: "rgba(251, 191, 36, 0.05)",
-    padding: 15,
-    borderRadius: 16,
+    paddingHorizontal: 15,
+    paddingVertical: 10,
+    borderRadius: 12,
     borderWidth: 1,
     borderColor: "rgba(251, 191, 36, 0.15)",
-    marginBottom: 24,
+    marginBottom: 16,
     alignItems: "center",
   },
   infoIcon: {
@@ -322,13 +324,14 @@ const styles = StyleSheet.create({
     lineHeight: 20,
   },
   ingredientsList: {
-    gap: 12,
+    gap: 8,
   },
   ingredientItem: {
     flexDirection: "row",
     backgroundColor: "rgba(255,255,255,0.03)",
-    padding: 12,
-    borderRadius: 20, // slightly tighter border radius for tighter padding
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 16, // slightly tighter border radius for tighter padding
     borderWidth: 1,
     borderColor: "rgba(255,255,255,0.05)",
     alignItems: "center",
@@ -337,11 +340,11 @@ const styles = StyleSheet.create({
     borderColor: "rgba(255,255,255,0.02)",
   },
   checkboxContainer: {
-    width: 32,
-    height: 32,
+    width: 28,
+    height: 28,
     justifyContent: "center",
     alignItems: "center",
-    marginRight: 12,
+    marginRight: 10,
   },
   ingredientDetails: {
     flex: 1,
@@ -351,18 +354,18 @@ const styles = StyleSheet.create({
   },
   ingredientName: {
     flex: 1,
-    fontSize: 18,
+    fontSize: 16,
     fontWeight: "700",
     color: "#ffffff",
     textTransform: "capitalize",
-    marginRight: 12,
+    marginRight: 8,
   },
   textStrikethrough: {
     textDecorationLine: "line-through",
     color: "#4b5563",
   },
   ingredientQuantity: {
-    fontSize: 18,
+    fontSize: 16,
     fontWeight: "600",
     color: "#ffa500",
   },
