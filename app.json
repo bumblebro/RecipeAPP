@@ -23,7 +23,8 @@
         "NSMicrophoneUsageDescription": "This app uses the microphone to listen for voice commands during cooking.",
         "NSSpeechRecognitionUsageDescription": "This app uses speech recognition to process your voice commands.",
         "NSPhotoLibraryUsageDescription": "This app needs access to your photo library to let you upload recipe photos and share your creations."
-      }
+      },
+      "buildNumber": "2"
     },
     "android": {
       "googleServicesFile": "./google-services.json",
