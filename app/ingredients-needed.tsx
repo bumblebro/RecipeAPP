@@ -46,7 +46,7 @@ export default function IngredientsNeededScreen() {
 
   const handleStartCooking = () => {
     router.push({
-      pathname: "/recipe",
+      pathname: "/voice-onboarding",
       params: { recipe: JSON.stringify(recipeData) },
     });
   };

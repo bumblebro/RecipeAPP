@@ -13,25 +13,45 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import Animated, {
   useAnimatedStyle,
   useSharedValue,
-  withSpring,
   interpolate,
   useAnimatedScrollHandler,
+  Extrapolation,
 } from 'react-native-reanimated';
-import { ChevronRight, ArrowRight } from 'lucide-react-native';
+import { ChevronRight } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import { AnimatePresence, MotiView } from 'moti';
-import { Easing } from 'react-native-reanimated';
 import { LinearGradient } from 'expo-linear-gradient';
+import LottieView from 'lottie-react-native';
 import { useSettingsStore } from '../stores/useSettingsStore';
 
-const { width: SCREEN_WIDTH } = Dimensions.get('window');
+const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
 const ONBOARDING_DATA = [
-  { image: require('../assets/onboarding/Onboarding_Step1.png') },
-  { image: require('../assets/onboarding/Onboarding_Step2.png') },
-  { image: require('../assets/onboarding/Onboarding_Step3.png') },
-  { image: require('../assets/onboarding/Onboarding_Step4.png') },
-  { image: require('../assets/onboarding/Onboarding_Step5.png') },
+  {
+    animation: require('../assets/animations/waiting.json'),
+    title: "Your AI Kitchen Guide",
+    subtitle: "Personalized recipes, smart scaling, and voice-assisted cooking tailored to your taste.",
+  },
+  {
+    animation: require('../assets/animations/sauteing.json'),
+    title: "Say \"Hey Chef\"",
+    subtitle: "Control your guide hands-free while you cook. Never touch your screen with messy hands again.",
+  },
+  {
+    animation: require('../assets/animations/measuring.json'),
+    title: "Cook for Any Crowd",
+    subtitle: "Instantly scale ingredient quantities for 1 to 12 servings with professional precision.",
+  },
+  {
+    animation: require('../assets/animations/heating.json'),
+    title: "Smart Instructions",
+    subtitle: "Detailed, step-by-step guidance that feels like having a pro chef right by your side.",
+  },
+  {
+    animation: require('../assets/animations/serving.json'),
+    title: "Build Your Cookbook",
+    subtitle: "Save your favorite creations and build a personalized library of dishes you love.",
+  },
 ];
 
 export default function OnboardingScreen() {
@@ -41,6 +61,8 @@ export default function OnboardingScreen() {
   const [currentIndex, setCurrentIndex] = useState(0);
   
   const scrollX = useSharedValue(0);
+  const scrollRef = useRef<Animated.ScrollView>(null);
+
   const scrollHandler = useAnimatedScrollHandler({
     onScroll: (event) => {
       scrollX.value = event.contentOffset.x;
@@ -51,8 +73,6 @@ export default function OnboardingScreen() {
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     setHasCompletedOnboarding(true);
   };
-
-  const scrollRef = useRef<Animated.ScrollView>(null);
 
   const nextSlide = () => {
     const nextIndex = Math.floor(scrollX.value / SCREEN_WIDTH) + 1;
@@ -69,6 +89,23 @@ export default function OnboardingScreen() {
     <View style={styles.container}>
       <StatusBar barStyle="light-content" />
       
+      {/* Immersive Dark Background */}
+      <View style={StyleSheet.absoluteFill}>
+        <LinearGradient
+          colors={['#000000', '#0a0a0a', '#111111']}
+          style={StyleSheet.absoluteFill}
+        />
+        <MotiView
+          from={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ type: 'timing', duration: 1500 }}
+          style={StyleSheet.absoluteFill}
+        >
+          <View style={[styles.glow, { top: '20%', left: '-10%', backgroundColor: '#f59e0b10' }]} />
+          <View style={[styles.glow, { bottom: '10%', right: '-10%', backgroundColor: '#f59e0b05' }]} />
+        </MotiView>
+      </View>
+
       <Animated.ScrollView
         ref={scrollRef as any}
         horizontal
@@ -80,33 +117,80 @@ export default function OnboardingScreen() {
           setCurrentIndex(newIndex);
         }}
         scrollEventThrottle={16}
+        style={StyleSheet.absoluteFill}
       >
-        {ONBOARDING_DATA.map((item, index) => (
-          <View key={index} style={[styles.slide, { width: SCREEN_WIDTH }]}>
-            <Image
-              source={item.image}
-              contentFit="contain"
-              style={[StyleSheet.absoluteFill, { top: -80 }]}
-            />
-          </View>
-        ))}
+        {ONBOARDING_DATA.map((item, index) => {
+          const contentStyle = useAnimatedStyle(() => {
+            const opacity = interpolate(
+              scrollX.value,
+              [(index - 0.5) * SCREEN_WIDTH, index * SCREEN_WIDTH, (index + 0.5) * SCREEN_WIDTH],
+              [0, 1, 0],
+              Extrapolation.CLAMP
+            );
+            const scale = interpolate(
+              scrollX.value,
+              [(index - 0.5) * SCREEN_WIDTH, index * SCREEN_WIDTH, (index + 0.5) * SCREEN_WIDTH],
+              [0.8, 1, 0.8],
+              Extrapolation.CLAMP
+            );
+            return {
+              opacity,
+              transform: [{ scale }],
+            };
+          });
+
+          return (
+            <View key={index} style={[styles.slide, { width: SCREEN_WIDTH }]}>
+              <Animated.View style={[styles.slideContent, contentStyle]}>
+                 {/* Lottie Animation Header */}
+                <View style={styles.animationContainer}>
+                  <LottieView
+                    source={item.animation}
+                    autoPlay
+                    loop
+                    style={styles.lottie}
+                  />
+                </View>
+
+                {/* Text Content */}
+                <View style={styles.textContainer}>
+                  <MotiView
+                    from={{ opacity: 0, translateY: 20 }}
+                    animate={{ opacity: 1, translateY: 0 }}
+                    transition={{ type: 'timing', duration: 800, delay: 200 }}
+                  >
+                    <Text style={styles.title}>{item.title}</Text>
+                  </MotiView>
+                  
+                  <MotiView
+                    from={{ opacity: 0, translateY: 20 }}
+                    animate={{ opacity: 1, translateY: 0 }}
+                    transition={{ type: 'timing', duration: 800, delay: 400 }}
+                  >
+                    <Text style={styles.subtitle}>{item.subtitle}</Text>
+                  </MotiView>
+                </View>
+              </Animated.View>
+            </View>
+          );
+        })}
       </Animated.ScrollView>
 
-      {/* Pagination Dots Overlay */}
-      <View style={[styles.pagination, { bottom: insets.bottom + 110 }]}>
+      {/* Pagination Dots */}
+      <View style={[styles.pagination, { bottom: insets.bottom + 120 }]}>
         {ONBOARDING_DATA.map((_, index) => {
           const dotStyle = useAnimatedStyle(() => {
             const opacity = interpolate(
               scrollX.value / SCREEN_WIDTH,
               [index - 1, index, index + 1],
               [0.3, 1, 0.3],
-              'clamp'
+              Extrapolation.CLAMP
             );
             const width = interpolate(
               scrollX.value / SCREEN_WIDTH,
               [index - 1, index, index + 1],
-              [8, 22, 8],
-              'clamp'
+              [8, 24, 8],
+              Extrapolation.CLAMP
             );
             return {
               opacity,
@@ -123,59 +207,45 @@ export default function OnboardingScreen() {
         })}
       </View>
 
-      {/* Bottom Buttons Overlay */}
+      {/* Footer Controls */}
       <View style={[styles.footer, { paddingBottom: insets.bottom + 30 }]}>
-        <View />
+        <Pressable 
+          onPress={handleFinish}
+          style={styles.skipButton}
+        >
+          <Text style={styles.skipText}>Skip</Text>
+        </Pressable>
+
         <Pressable 
           onPress={nextSlide}
-          className="h-14 px-8 rounded-full items-center justify-center flex-row overflow-hidden active:opacity-80 bg-neutral-800"
-          onPressIn={() => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium)}
+          className="h-16 px-10 rounded-[28px] items-center justify-center flex-row overflow-hidden active:scale-95 bg-neutral-800"
         >
-          {/* Sliding Background Color Animation */}
           <AnimatePresence>
             <MotiView
               key={currentIndex >= ONBOARDING_DATA.length - 1 ? "done" : "next"}
-              from={{ translateX: -200, opacity: 0 }}
-              animate={{ 
-                translateX: 0, 
-                opacity: 1,
-                scale: currentIndex >= ONBOARDING_DATA.length - 1 ? [1, 1.05, 1] : 1
-              }}
-              exit={{ translateX: 200, opacity: 0 }}
-              transition={{ 
-                type: 'timing', 
-                duration: 450, 
-                easing: Easing.out(Easing.quad),
-                scale: {
-                  type: 'timing',
-                  duration: 1500,
-                  loop: true,
-                  easing: Easing.inOut(Easing.quad)
-                }
-              }}
-              className="absolute inset-0"
+              from={{ opacity: 0, scale: 0.8 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.8 }}
               style={StyleSheet.absoluteFill}
             >
               <LinearGradient
                 colors={currentIndex >= ONBOARDING_DATA.length - 1
-                  ? ["#4ade80", "#16a34a"] // Vibrant Green for Done
-                  : ["#fb923c", "#f97316"] // Pop Orange for Next
+                  ? ["#4ade80", "#16a34a"]
+                  : ["#fb923c", "#f97316"]
                 }
                 start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 0.5 }}
+                end={{ x: 1, y: 0 }}
                 style={{ flex: 1 }}
               />
             </MotiView>
           </AnimatePresence>
 
-          <View className="items-center justify-center z-10 relative flex-row">
-            <Text className="text-black font-bold text-xl leading-tight">
-              {currentIndex === ONBOARDING_DATA.length - 1
-                ? "Get Started"
-                : "Next"}
+          <View style={styles.buttonContent}>
+            <Text style={styles.buttonText}>
+              {currentIndex === ONBOARDING_DATA.length - 1 ? "Get Started" : "Next"}
             </Text>
             {currentIndex !== ONBOARDING_DATA.length - 1 && (
-              <ChevronRight size={24} color="#000" className="ml-1" />
+              <ChevronRight size={22} color="#000" style={{ marginLeft: 4 }} />
             )}
           </View>
         </Pressable>
@@ -191,6 +261,46 @@ const styles = StyleSheet.create({
   },
   slide: {
     flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  slideContent: {
+    flex: 1,
+    width: '100%',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 40,
+    paddingBottom: 160, // Clear the dots and footer
+  },
+  animationContainer: {
+    width: SCREEN_WIDTH * 0.65, // Reduced from 0.8
+    height: SCREEN_WIDTH * 0.65,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 20, // Tighter margin for small screens
+  },
+  lottie: {
+    width: '100%',
+    height: '100%',
+  },
+  textContainer: {
+    alignItems: 'center',
+    width: '100%',
+  },
+  title: {
+    fontSize: 32,
+    fontWeight: '900',
+    color: '#FFFFFF',
+    textAlign: 'center',
+    marginBottom: 12, // Tighter title margin
+    letterSpacing: -1,
+  },
+  subtitle: {
+    fontSize: 17, // Slightly smaller
+    color: '#9ca3af',
+    textAlign: 'center',
+    lineHeight: 24,
+    fontWeight: '500',
   },
   pagination: {
     flexDirection: 'row',
@@ -201,7 +311,7 @@ const styles = StyleSheet.create({
   dot: {
     height: 8,
     borderRadius: 4,
-    backgroundColor: '#f59e0b',
+    backgroundColor: '#fb923c',
     marginHorizontal: 4,
   },
   footer: {
@@ -212,34 +322,35 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingHorizontal: 40,
+    paddingHorizontal: 32,
     zIndex: 10,
   },
   skipButton: {
     paddingVertical: 12,
-    paddingHorizontal: 24,
-    backgroundColor: 'rgba(0,0,0,0.5)',
-    borderRadius: 24,
+    paddingHorizontal: 16,
   },
   skipText: {
-    color: '#FFF',
+    color: '#9ca3af',
     fontSize: 16,
-    fontWeight: '700',
+    fontWeight: '600',
   },
-  nextButton: {
-    padding: 10,
-  },
-  nextButtonCircle: {
-    width: 64,
-    height: 64,
-    borderRadius: 32,
-    backgroundColor: '#f59e0b',
+  buttonContent: {
+    flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.4,
-    shadowRadius: 6,
-    elevation: 10,
+    zIndex: 20,
+  },
+  buttonText: {
+    color: '#000',
+    fontSize: 19,
+    fontWeight: '900',
+    textTransform: 'uppercase',
+    letterSpacing: -0.5,
+  },
+  glow: {
+    position: 'absolute',
+    width: 300,
+    height: 300,
+    borderRadius: 150,
+    opacity: 0.5,
   },
 });
