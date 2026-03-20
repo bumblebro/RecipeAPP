@@ -35,7 +35,7 @@ import * as Progress from "react-native-progress";
 import { useCookingStore } from "../stores/useCookingStore";
 import { mapRecipeDataToRecipe } from "../utils/recipeMapper";
 import { synthesizeSpeech } from "../utils/googleTTS";
-import Voice from '@react-native-voice/voice';
+import { useVoiceCommands } from '../hooks/useVoiceCommands';
 import { Volume2, VolumeX } from "lucide-react-native";
 import { useSettingsStore } from "../stores/useSettingsStore";
 import { usePaywall } from "../lib/usePaywall";
@@ -397,9 +397,7 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
   const [showTimersModal, setShowTimersModal] = useState(false);
   const [showCompletionScreen, setShowCompletionScreen] = useState(false);
 
-  // Voice State
-  const [isListening, setIsListening] = useState(false);
-  const [partialTranscript, setPartialTranscript] = useState("");
+  // Voice & Settings State
   const {
     voiceEnabled: settingsVoiceEnabled,
     keepScreenAwake: settingsKeepScreenAwake
@@ -432,17 +430,12 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
   const [isTTSEnabled, setIsTTSEnabled] = useState(true);
   const [isPlaying, setIsPlaying] = useState(false);
   const isPlayingRef = useRef(false);
-  const voiceRestartNeededRef = useRef(false); // Track if voice should restart after audio
-  const voiceStoppedForAudioRef = useRef(false); // Track if we've already stopped voice for current audio
   useEffect(() => {
     isPlayingRef.current = isPlaying;
   }, [isPlaying]);
   const soundRef = useRef<Audio.Sound | null>(null);
   const playedTimerAlerts = useRef<Set<string>>(new Set());
   const spokenStepsRef = useRef<Set<number>>(new Set());
-  const lastCommandRef = useRef<number>(0);
-  const isVoiceStartingRef = useRef<boolean>(false);
-  const handleVoiceCommandRef = useRef<((t: string) => void) | null>(null);
 
   const playCompletionSound = useCallback(async () => {
     try {
@@ -1414,7 +1407,6 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
 
   const playStepAudio = useCallback(async (text: string) => {
     // Increment ID to cancel any previous pending operations
-
     const requestId = ++audioRequestId.current;
 
     try {
@@ -1422,22 +1414,13 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
       await stopAudio();
 
       if (requestId !== audioRequestId.current) return;
-
       if (!text) return;
 
-      // Update ref synchronously BEFORE stopping voice to prevent race condition
+      // Set playing state — the useVoiceCommands hook reacts to this
+      // and will automatically mute the mic
       isPlayingRef.current = true;
       setIsPlaying(true);
-      voiceStoppedForAudioRef.current = false; // Reset for new audio session
-      
-      // Stop voice recognition while we speak
-      try {
-        await Voice.stop();
-        voiceStoppedForAudioRef.current = true;
-      } catch (voiceError) {
-        // Voice might not be running, that's okay
-      }
-      
+
       const audioUri = await synthesizeSpeech(text);
 
       // Check if this request is still valid after async operation
@@ -1461,22 +1444,8 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
           if (status.isLoaded && status.didJustFinish) {
             setIsPlaying(false);
             isPlayingRef.current = false;
-            voiceStoppedForAudioRef.current = false; // Reset for next audio
-            
-            // Restart voice recognition after audio finishes, if needed
-            // Use current values via settings store to avoid stale closures
-            const shouldRestart = voiceRestartNeededRef.current;
-            if (shouldRestart) {
-              voiceRestartNeededRef.current = false;
-              setTimeout(() => {
-                // Double-check voice is still enabled and not playing before restart
-                if (!isPlayingRef.current) {
-                  Voice.start('en-US').catch((err) => {
-                    console.log("Voice restart after audio error:", err);
-                  });
-                }
-              }, 300);
-            }
+            // useVoiceCommands hook will detect isPlaying=false
+            // and automatically resume wake word listening
           }
         });
       } else {
@@ -1532,281 +1501,164 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
     }
   }, [currentStepTimer, adjustTimer]);
 
-  // Voice Command Handler (Deterministic Engine)
-  const handleVoiceCommand = useCallback((transcript: string) => {
-    const now = Date.now();
-    // 1.5 second cooldown to prevent double-triggers (especially from partial results)
-    if (now - lastCommandRef.current < 1500) {
-      return false;
-    }
+  // ── Voice Commands Configuration ──────────────────────────────────────────
+  // Define command arrays for the useVoiceCommands hook
 
-    const text = transcript.toLowerCase().trim();
-    if (!text) return false;
-
-    console.log("[Voice] Received:", text);
-
-    // special regex check for "step X" commands
-    const stepMatch = text.match(/(?:go to |jump to |move to )?step\s+(\w+|\d+)/);
-    if (stepMatch) {
-      let stepNum = parseInt(stepMatch[1], 10);
-
-      // Handle word numbers (limiting to common recipe step counts)
-      if (isNaN(stepNum)) {
-        const wordMap: { [key: string]: number } = {
-          "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10,
-          "eleven": 11, "twelve": 12, "thirteen": 13, "fourteen": 14, "fifteen": 15, "twenty": 20
-        };
-        stepNum = wordMap[stepMatch[1]] || 0;
+  const voiceCommands = useMemo(() => [
+    {
+      triggers: ["go to timer", "jump to timer", "show timer", "where is the timer"],
+      action: () => {
+        const runningTimer = timers.find(t => t.isRunning && !t.isComplete);
+        if (runningTimer) {
+          const stepIdMatch = runningTimer.stepId.match(/step-(\d+)/);
+          if (stepIdMatch) {
+            startStep(parseInt(stepIdMatch[1], 10));
+          }
+        }
       }
-
-      const totalSteps = recipeData?.processedInstructions?.length || 0;
-
-      if (stepNum > 0 && stepNum <= totalSteps) {
-        lastCommandRef.current = now;
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-        Voice.stop().catch(e => console.log("Voice stop error:", e));
-        setPartialTranscript("");
-
-        // Convert to 0-based index
-        startStep(stepNum - 1);
-        return true;
+    },
+    {
+      triggers: ["next step", "next", "go next", "move to next", "continue", "forward", "ready"],
+      action: () => goToNextStep()
+    },
+    {
+      triggers: ["go back", "previous", "back", "previous step", "before", "move back"],
+      action: () => goToPreviousStep()
+    },
+    {
+      triggers: ["pause", "stop timer", "pause timer", "stop", "hold"],
+      action: () => {
+        if (currentStepTimer?.isRunning) {
+          pauseStoreTimer(currentStepTimer.id);
+          setIsPaused(true);
+        }
       }
-    }
-
-    const commands = [
-      {
-        match: ["go to timer", "jump to timer", "show timer", "where is the timer"],
-        action: () => {
-          // Find the first running timer
-          const runningTimer = timers.find(t => t.isRunning && !t.isComplete);
-          if (runningTimer) {
-            const stepIdMatch = runningTimer.stepId.match(/step-(\d+)/);
-            if (stepIdMatch) {
-              const stepIndex = parseInt(stepIdMatch[1], 10);
-              startStep(stepIndex);
-            }
-          }
+    },
+    {
+      triggers: ["start timer", "begin timer", "start", "begin"],
+      action: () => handleStartTimer()
+    },
+    {
+      triggers: ["how long", "time remaining", "time left", "remaining time"],
+      action: () => {
+        if (currentStepTimer && !currentStepTimer.isComplete) {
+          const mins = Math.floor(currentStepTimer.remainingSeconds / 60);
+          const secs = currentStepTimer.remainingSeconds % 60;
+          const timeText = mins > 0
+            ? `${mins} minute${mins !== 1 ? 's' : ''} and ${secs} second${secs !== 1 ? 's' : ''} remaining`
+            : `${secs} second${secs !== 1 ? 's' : ''} remaining`;
+          playStepAudio(timeText);
+        } else {
+          playStepAudio("No active timer on this step.");
         }
-      },
-      { match: ["next step", "next", "continue", "forward", "ready"], action: () => goToNextStep() },
-      { match: ["back", "previous", "go back", "previous step"], action: () => goToPreviousStep() },
-      {
-        match: ["pause", "stop", "pause timer"], action: () => {
-          if (currentStepTimer?.isRunning) {
-            pauseStoreTimer(currentStepTimer.id);
-            setIsPaused(true);
-          }
-        }
-      },
-      {
-        match: ["restart", "restart timer", "reset timer"], action: () => {
-          if (currentStepTimer) {
-            resetStoreTimer(currentStepTimer.id);
-            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-          }
-        }
-      },
-      {
-        match: ["break", "kitchen break", "take a break", "pause cooking", "hold on"],
-        action: () => {
-          if (!isGlobalPaused) {
-            toggleGlobalPause();
-            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-          }
-        }
-      },
-      {
-        match: ["resume", "resume cooking", "resume timer", "continue timer", "continue", "back to cooking"], action: () => {
-          // If global pause is active, resume cooking
-          if (isGlobalPaused) {
-            toggleGlobalPause();
-            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-            return;
-          }
-
-          // If timer is paused, this will resume it (handleStartTimer toggles)
-          if (currentStepTimer && !currentStepTimer.isRunning && !currentStepTimer.isComplete) {
-            handleStartTimer();
-          }
-        }
-      },
-      { match: ["start timer", "begin", "start"], action: () => handleStartTimer() },
-      {
-        match: ["repeat", "say again", "repeat instruction"], action: () => {
-          const textToRead = currentStep.speech || currentStep.action;
-          playStepAudio(textToRead);
-        }
-      },
-      { match: ["add one minute", "add 1 minute", "minute extra"], action: () => handleAddMinute() },
-      {
-        match: ["show ingredients", "ingredients", "what ingredients", "list ingredients", "ingredients list", "view ingredients"],
-        action: () => setShowIngredientsModal(true)
-      },
-      {
-        match: ["close", "hide", "done", "dismiss", "exit modal"],
-        action: () => {
-          if (showIngredientsModal) setShowIngredientsModal(false);
-          if (showTimersModal) setShowTimersModal(false);
-        }
-      },
-    ];
-
-    for (const cmd of commands) {
-      if (cmd.match.some(m => text.toLowerCase().includes(m))) {
-        lastCommandRef.current = now; // Set cooldown
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-
-        // Stop recognition immediately and clear transcript to avoid race conditions
-        Voice.stop().catch(e => console.log("Voice stop error:", e));
-        setPartialTranscript("");
-
-        cmd.action();
-        return true;
       }
-    }
-    return false;
-  }, [goToNextStep, goToPreviousStep, currentStepTimer, pauseStoreTimer, handleStartTimer, currentStep, playStepAudio, handleAddMinute, startStep, recipeData, setShowIngredientsModal, setShowTimersModal, showIngredientsModal, showTimersModal]);
+    },
+    {
+      triggers: ["read ingredients", "ingredients", "what ingredients", "list ingredients", "show ingredients"],
+      action: () => {
+        if (currentStep?.ingredients && currentStep.ingredients.length > 0) {
+          const ingredientsList = currentStep.ingredients
+            .map(i => `${i.quantity || ''} ${i.unit || ''} ${i.name}`.trim())
+            .join(', ');
+          playStepAudio(`Ingredients for this step: ${ingredientsList}`);
+        } else {
+          setShowIngredientsModal(true);
+        }
+      }
+    },
+    {
+      triggers: ["repeat", "say again", "read again", "repeat instruction"],
+      action: () => {
+        const textToRead = currentStep?.speech || currentStep?.action;
+        if (textToRead) playStepAudio(textToRead);
+      }
+    },
+    {
+      triggers: ["restart", "restart timer", "reset timer"],
+      action: () => {
+        if (currentStepTimer) {
+          resetStoreTimer(currentStepTimer.id);
+          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        }
+      }
+    },
+    {
+      triggers: ["break", "kitchen break", "take a break", "pause cooking", "hold on"],
+      action: () => {
+        if (!isGlobalPaused) {
+          toggleGlobalPause();
+          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        }
+      }
+    },
+    {
+      triggers: ["resume", "resume cooking", "resume timer", "continue timer", "back to cooking"],
+      action: () => {
+        if (isGlobalPaused) {
+          toggleGlobalPause();
+          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+          return;
+        }
+        if (currentStepTimer && !currentStepTimer.isRunning && !currentStepTimer.isComplete) {
+          handleStartTimer();
+        }
+      }
+    },
+    {
+      triggers: ["add one minute", "add 1 minute", "minute extra"],
+      action: () => handleAddMinute()
+    },
+    {
+      triggers: ["close", "hide", "dismiss", "exit modal"],
+      action: () => {
+        if (showIngredientsModal) setShowIngredientsModal(false);
+        if (showTimersModal) setShowTimersModal(false);
+      }
+    },
+  ], [
+    timers, goToNextStep, goToPreviousStep, currentStepTimer, pauseStoreTimer,
+    handleStartTimer, currentStep, playStepAudio, handleAddMinute, startStep,
+    resetStoreTimer, isGlobalPaused, toggleGlobalPause, showIngredientsModal, showTimersModal,
+  ]);
 
-  // Keep Ref in sync for listeners to stay stable
-  useEffect(() => {
-    handleVoiceCommandRef.current = handleVoiceCommand;
-  }, [handleVoiceCommand]);
+  const voiceRegexCommands = useMemo(() => [
+    {
+      pattern: /(?:go to |jump to |move to )?step\s+(\w+|\d+)/,
+      action: (match: RegExpMatchArray) => {
+        let stepNum = parseInt(match[1], 10);
+        if (isNaN(stepNum)) {
+          const wordMap: { [key: string]: number } = {
+            "one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
+            "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10,
+            "eleven": 11, "twelve": 12, "thirteen": 13, "fourteen": 14,
+            "fifteen": 15, "twenty": 20,
+          };
+          stepNum = wordMap[match[1]] || 0;
+        }
+        const totalSteps = recipeData?.processedInstructions?.length || 0;
+        if (stepNum > 0 && stepNum <= totalSteps) {
+          startStep(stepNum - 1);
+          return true;
+        }
+        return false;
+      },
+    },
+  ], [recipeData, startStep]);
 
   // Permission Gate
   const [isPermissionChecked, setIsPermissionChecked] = useState(false);
 
-    // 1. One-time setup of audio mode when voice is enabled
-    useEffect(() => {
-      if (isVoiceEnabled && isPermissionChecked && Platform.OS === 'ios') {
-        const setupAudioMode = async () => {
-          try {
-            await Audio.setAudioModeAsync({
-              allowsRecordingIOS: true,
-              playsInSilentModeIOS: true,
-              staysActiveInBackground: true,
-              interruptionModeIOS: InterruptionModeIOS.MixWithOthers,
-              shouldDuckAndroid: true,
-              interruptionModeAndroid: InterruptionModeAndroid.DuckOthers,
-              playThroughEarpieceAndroid: false,
-              // @ts-ignore - explicitly set to false to match categories
-              playThroughEarpieceIOS: false, 
-            });
-          } catch (audioError) {
-            console.log("Audio mode configuration error:", audioError);
-          }
-        };
-        setupAudioMode();
-      }
-    }, [isVoiceEnabled, isPermissionChecked]);
+  // ── useVoiceCommands Hook ────────────────────────────────────────────────
+  const { voiceMode, isListening, partialTranscript } = useVoiceCommands({
+    enabled: isVoiceEnabled && isPermissionChecked,
+    permissionGranted: isPermissionChecked,
+    isTTSSpeaking: isPlaying,
+    commands: voiceCommands,
+    regexCommands: voiceRegexCommands,
+  });
 
-    // Watchdog: Force stop voice if it's somehow running while audio is playing
-    // Only stop once per audio session to prevent callback loops
-    useEffect(() => {
-      if (isPlaying && !voiceStoppedForAudioRef.current) {
-        // Audio just started playing and we haven't stopped voice yet
-        Voice.stop().catch(() => {});
-        voiceStoppedForAudioRef.current = true;
-      }
-    }, [isPlaying]);
+  // Audio mode is now managed by useVoiceCommands to ensure compatibility with Voice
 
-    // 2. Stable Voice Recognition Loop
-    useEffect(() => {
-    // Determine if we should even attempt to start voice
-    // 1. Feature must be enabled in settings
-    // 2. We must have checked (and potentially granted) permissions
-    const shouldStartVoice = isVoiceEnabled && isPermissionChecked;
-
-    if (!shouldStartVoice) {
-      Voice.stop().catch(() => { });
-      return;
-    }
-
-    const startVoice = async () => {
-      if (isVoiceStartingRef.current) return;
-      
-      // Don't start listening if we're currently speaking an instruction
-      // This prevents the app from hearing itself and causing session conflicts
-      if (isPlayingRef.current) {
-        console.log("Postponing voice start as audio is playing");
-        setTimeout(startVoice, 1000);
-        return;
-      }
-
-      try {
-        isVoiceStartingRef.current = true;
-        
-        // Ensure small buffer for iOS session stability
-        if (Platform.OS === 'ios') {
-          await new Promise(resolve => setTimeout(resolve, 200));
-        }
-        
-        // Final check before starting - ensure audio hasn't started in the meantime
-        if (isPlayingRef.current) {
-          console.log("Audio started during voice initialization, aborting");
-          return;
-        }
-
-        await Voice.start('en-US');
-      } catch (e) {
-        console.log("Voice start error helper:", e);
-      } finally {
-        isVoiceStartingRef.current = false;
-      }
-    };
-
-    Voice.onSpeechStart = () => setIsListening(true);
-
-    Voice.onSpeechEnd = () => {
-      setIsListening(false);
-      // Only restart if still allowed AND not currently playing audio
-      if (isVoiceEnabled && isPermissionChecked) {
-        if (!isPlayingRef.current) {
-          setTimeout(startVoice, 500);
-        } else {
-          // Mark that we need to restart after audio finishes
-          voiceRestartNeededRef.current = true;
-        }
-      }
-    };
-
-    Voice.onSpeechError = (e) => {
-      // Log only real errors, ignore "already started" in console if possible
-      if (e.error?.message !== "Speech recognition already started!") {
-        console.log("Voice Error:", e);
-      }
-      setIsListening(false);
-      // Only restart if still allowed AND not currently playing audio
-      if (isVoiceEnabled && isPermissionChecked) {
-        if (!isPlayingRef.current) {
-          setTimeout(startVoice, 1000);
-        } else {
-          // Mark that we need to restart after audio finishes
-          voiceRestartNeededRef.current = true;
-        }
-      }
-    };
-
-    Voice.onSpeechResults = (e) => {
-      if (e.value && e.value.length > 0) {
-        handleVoiceCommandRef.current?.(e.value[0]);
-      }
-    };
-
-    Voice.onSpeechPartialResults = (e) => {
-      if (e.value && e.value.length > 0) {
-        setPartialTranscript(e.value[0]);
-        handleVoiceCommandRef.current?.(e.value[0]);
-      }
-    };
-
-    // Initial start
-    startVoice();
-
-    return () => {
-      Voice.destroy().then(Voice.removeAllListeners);
-    };
-    // Dependency array - restart if enabled status or permission checked status changes
-  }, [isVoiceEnabled, isPermissionChecked]);
 
 
   // Permission Handling
@@ -1814,37 +1666,36 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
 
   useEffect(() => {
     const checkPermissions = async () => {
-      // Only check if voice feature is actually enabled in settings
-      // If disabled in settings, we don't care about permissions yet
+      // Only check if voice feature is actually enabled locally or in settings
       if (!isVoiceEnabled) {
+        console.log("[Voice] Feature disabled, skipping permission check");
         setIsPermissionChecked(false);
         return;
       }
 
       try {
+        console.log("[Voice] Checking microphone permissions...");
         const { status } = await Audio.getPermissionsAsync();
-
+        
         if (status === 'granted') {
-          // All good, ungate the voice loop
+          console.log("[Voice] Permission granted");
           setIsPermissionChecked(true);
         } else if (status === 'undetermined') {
-          // Needs user action, but don't disable the setting, just block the start
-          // Show our explanation modal
-          setIsPermissionChecked(false); // Gate remains closed
+          console.log("[Voice] Permission undetermined, showing modal");
+          setIsPermissionChecked(false);
           setShowPermissionModal(true);
         } else {
-          // Denied previously
+          console.log("[Voice] Permission denied");
           setIsPermissionChecked(false);
-          // Optional: could alert user here or just fail silently until they toggle
         }
       } catch (e) {
-        console.log("Error checking permissions:", e);
+        console.log("[Voice] Error checking permissions:", e);
         setIsPermissionChecked(false);
       }
     };
 
     checkPermissions();
-  }, [settingsVoiceEnabled]); // Run when settings change or mount
+  }, [isVoiceEnabled, settingsVoiceEnabled]); // Run when settings change or local toggle mount
 
   const handleGrantPermissions = async () => {
     try {
@@ -2416,63 +2267,95 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
             </View>
           )}
 
-          {/* Voice Command Toggle / Status */}
-          <Pressable
-            onPress={() => {
-              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-              setIsVoiceEnabled(!isVoiceEnabled);
-            }}
-            className="absolute top-4 right-16 z-50 w-10 h-10 rounded-full bg-neutral-800/80 items-center justify-center border border-neutral-700/50"
-          >
-            {isVoiceEnabled ? (
-              <MotiView
-                animate={{
-                  scale: isListening ? [1, 1.2, 1] : 1,
-                  opacity: isListening ? [1, 0.6, 1] : 1,
-                }}
-                transition={{
-                  type: 'timing',
-                  duration: 1000,
-                  loop: true,
-                }}
+          {/* Cooking Dashboard Overlay (Fixed at top-right) */}
+          <View className="absolute top-4 right-4 z-50 flex-row items-center gap-2">
+            {/* 1. Voice Status (Dynamic Inline) */}
+            {isVoiceEnabled && (
+              <Animated.View
+                entering={FadeIn.duration(300)}
+                exiting={FadeOut.duration(300)}
+                style={styles.voiceStatusContainer}
+                className={`flex-row items-center px-3 py-1.5 rounded-full border ${
+                  voiceMode === 'activeListening' 
+                    ? 'bg-amber-500 border-amber-600' 
+                    : 'bg-neutral-800/90 border-neutral-700/50'
+                }`}
               >
-                <Mic
-                  size={20}
-                  color={isListening ? "#f59e0b" : "#ffffff"}
-                />
-              </MotiView>
-            ) : (
-              <MicOff size={20} color="#6b7280" />
+                <Text 
+                  style={styles.voiceStatusText}
+                  className={`text-[10px] font-bold ${
+                    voiceMode === 'activeListening' ? 'text-black' : 'text-neutral-400'
+                  }`}
+                >
+                  {voiceMode === 'activeListening' 
+                    ? 'LISTENING' 
+                    : voiceMode === 'ttsMuted'
+                    ? 'MUTED'
+                    : 'HEY CHEF'
+                  }
+                </Text>
+              </Animated.View>
             )}
-          </Pressable>
 
-          {/* TTS Speaker Toggle / Manual Trigger */}
-          <Pressable
-            onPress={() => {
-              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-              if (isPlaying) {
-                stopAudio();
-              } else if (currentStep) {
-                const textToRead = currentStep.speech || currentStep.action;
-                playStepAudio(textToRead);
-                // Also mark as spoken if it wasn't already (though it usually would be)
-                spokenStepsRef.current.add(currentStepIndex);
-              }
-            }}
-            className="absolute top-4 right-4 z-50 w-10 h-10 rounded-full bg-neutral-800/80 items-center justify-center border border-neutral-700/50"
-          >
-            <View>
-              {isPlaying ? (
-                <Volume2
-                  size={20}
-                  color="#f59e0b"
-                  className="animate-pulse"
-                />
+            {/* 2. Mic Button */}
+            <Pressable
+              onPress={() => {
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                setIsVoiceEnabled(!isVoiceEnabled);
+              }}
+              className={`w-10 h-10 rounded-full items-center justify-center border ${
+                voiceMode === 'activeListening'
+                  ? 'bg-amber-500/20 border-amber-500'
+                  : isVoiceEnabled
+                  ? 'bg-neutral-800/80 border-neutral-700/50'
+                  : 'bg-neutral-800/80 border-neutral-700/50'
+              }`}
+            >
+              {isVoiceEnabled ? (
+                voiceMode === 'activeListening' ? (
+                  <MotiView
+                    animate={{ scale: [1, 1.3, 1], opacity: [1, 0.5, 1] }}
+                    transition={{ type: 'timing', duration: 600, loop: true }}
+                  >
+                    <Mic size={18} color="#f59e0b" />
+                  </MotiView>
+                ) : voiceMode === 'ttsMuted' ? (
+                  <MicOff size={18} color="#6b7280" />
+                ) : (
+                  <MotiView
+                    animate={{ scale: [1, 1.2, 1], opacity: [1, 0.7, 1] }}
+                    transition={{ type: 'timing', duration: 3000, loop: true }}
+                  >
+                    <Mic size={18} color="#ffffff" />
+                  </MotiView>
+                )
               ) : (
-                <Volume2 size={20} color="#ffffff" />
+                <MicOff size={18} color="#6b7280" />
               )}
-            </View>
-          </Pressable>
+            </Pressable>
+
+            {/* 3. TTS Speaker Toggle */}
+            <Pressable
+              onPress={() => {
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                if (isPlaying) {
+                  stopAudio();
+                } else if (currentStep) {
+                  const textToRead = currentStep.speech || currentStep.action;
+                  playStepAudio(textToRead);
+                }
+              }}
+              className="w-10 h-10 rounded-full bg-neutral-800/80 items-center justify-center border border-neutral-700/50"
+            >
+              <View>
+                {isPlaying ? (
+                  <Volume2 size={18} color="#f59e0b" className="animate-pulse" />
+                ) : (
+                  <Volume2 size={18} color="#ffffff" />
+                )}
+              </View>
+            </Pressable>
+          </View>
         </ScrollView>
 
         {/* Bottom Navigation Bar */}
@@ -2507,113 +2390,67 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
             <Pressable
               onPress={handlePrevious}
               disabled={currentStepIndex === 0}
-              className={`w-14 h-14 rounded-full items-center justify-center ${currentStepIndex === 0 ? "bg-neutral-800/50" : "bg-neutral-700"
-                } active:opacity-70`}
-              onPressIn={() =>
-                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
-              }
+              className={`w-14 h-14 rounded-full items-center justify-center ${currentStepIndex === 0 ? "bg-neutral-800/50" : "bg-neutral-700"} active:opacity-70`}
             >
-              <ChevronLeft
-                size={28}
-                color={currentStepIndex === 0 ? "#4b5563" : "#ffffff"}
-              />
+              <ChevronLeft size={28} color={currentStepIndex === 0 ? "#4b5563" : "#ffffff"} />
             </Pressable>
             <Pressable
               onPress={handleNext}
               className="h-14 px-8 rounded-full items-center justify-center flex-row overflow-hidden active:opacity-80 bg-neutral-800"
               onPressIn={() => {
-                if (
-                  currentStepIndex ===
-                  (recipeData?.processedInstructions?.length || 1) - 1
-                ) {
-                  Haptics.notificationAsync(
-                    Haptics.NotificationFeedbackType.Success
-                  );
+                if (currentStepIndex === (recipeData?.processedInstructions?.length || 1) - 1) {
+                  Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
                 } else {
                   Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
                 }
               }}
             >
-              {/* Sliding Background Color Animation */}
               <AnimatePresence>
                 <MotiView
-                  key={currentStepIndex === (recipeData?.processedInstructions?.length || 1) - 1
-                    ? "done"
-                    : currentStep?.canDoNextStepInParallel ? "parallel" : "next"}
+                  key={currentStepIndex === (recipeData?.processedInstructions?.length || 1) - 1 ? "done" : currentStep?.canDoNextStepInParallel ? "parallel" : "next"}
                   from={{ translateX: -200, opacity: 0 }}
-                  animate={{
-                    translateX: 0,
+                  animate={{ 
+                    translateX: 0, 
                     opacity: 1,
-                    scale: currentStep?.canDoNextStepInParallel && currentStepIndex !== (recipeData?.processedInstructions?.length || 1) - 1
-                      ? [1, 1.05, 1]
-                      : 1
+                    scale: currentStep?.canDoNextStepInParallel && currentStepIndex !== (recipeData?.processedInstructions?.length || 1) - 1 ? [1, 1.05, 1] : 1
                   }}
                   exit={{ translateX: 200, opacity: 0 }}
                   transition={{
                     type: 'timing',
                     duration: 450,
                     easing: Easing.out(Easing.quad),
-                    scale: {
-                      type: 'timing',
-                      duration: 1500,
-                      loop: true,
-                      easing: Easing.inOut(Easing.quad)
-                    }
+                    scale: { type: 'timing', duration: 1500, loop: true, easing: Easing.inOut(Easing.quad) }
                   }}
-                  className="absolute inset-0"
                   style={StyleSheet.absoluteFill}
                 >
                   <LinearGradient
-                    colors={currentStepIndex === (recipeData?.processedInstructions?.length || 1) - 1
-                      ? ["#4ade80", "#16a34a"] // Vibrant Green for Done
-                      : currentStep?.canDoNextStepInParallel
-                        ? ["#fde047", "#f59e0b"] // Bright Yellow for Parallel
-                        : ["#fde047", "#f59e0b"] // Consistent Yellow for Next
+                    colors={currentStepIndex === (recipeData?.processedInstructions?.length || 1) - 1 
+                      ? ["#4ade80", "#16a34a"] 
+                      : ["#fde047", "#f59e0b"]
                     }
-                    start={{ x: 0, y: 0 }}
-                    end={{ x: 1, y: 0.5 }}
-                    style={{ flex: 1 }}
+                    start={{ x: 0, y: 0 }} end={{ x: 1, y: 0.5 }} style={{ flex: 1 }}
                   />
                 </MotiView>
               </AnimatePresence>
-
-              {/* Shimmer for Parallel steps - More pronounced and continuous */}
+              
+              {/* Shimmer for Parallel steps */}
               {currentStep?.canDoNextStepInParallel && currentStepIndex !== (recipeData?.processedInstructions?.length || 1) - 1 && (
                 <MotiView
-                  from={{ translateX: -150 }}
-                  animate={{ translateX: 400 }}
-                  transition={{
-                    type: 'timing',
-                    duration: 2000,
-                    loop: true,
-                    easing: Easing.linear,
-                    repeatReverse: false
-                  }}
+                  from={{ translateX: -150 }} animate={{ translateX: 400 }}
+                  transition={{ type: 'timing', duration: 2000, loop: true, easing: Easing.linear, repeatReverse: false }}
                   className="absolute inset-0 z-0"
-                  style={{
-                    width: 80,
-                    height: "300%",
-                    backgroundColor: "rgba(255, 255, 255, 0.3)",
-                    transform: [{ rotate: "25deg" }],
-                    top: -50
-                  }}
+                  style={{ width: 80, height: "300%", backgroundColor: "rgba(255, 255, 255, 0.3)", transform: [{ rotate: "25deg" }], top: -50 }}
                 />
               )}
 
               <View className="items-center justify-center z-10 relative">
                 <Text className="text-black font-bold text-xl leading-tight">
-                  {currentStepIndex ===
-                    (recipeData?.processedInstructions?.length || 1) - 1
-                    ? "Done!"
-                    : currentStep?.canDoNextStepInParallel
-                      ? "Skip Step"
-                      : "Next Step"}
+                  {currentStepIndex === (recipeData?.processedInstructions?.length || 1) - 1 ? "Done!" : currentStep?.canDoNextStepInParallel ? "Skip Step" : "Next Step"}
                 </Text>
               </View>
-              {currentStepIndex !==
-                (recipeData?.processedInstructions?.length || 1) - 1 && (
-                  <ChevronRight size={22} color="#000000" className="ml-2 z-10" />
-                )}
+              {currentStepIndex !== (recipeData?.processedInstructions?.length || 1) - 1 && (
+                <ChevronRight size={22} color="#000000" className="ml-2 z-10" />
+              )}
             </Pressable>
           </View>
         </View>
@@ -3169,6 +3006,18 @@ export default function RecipeScreen({ recipe }: RecipeScreenProps) {
 }
 
 const styles = StyleSheet.create({
+  voiceStatusContainer: {
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 3.84,
+    elevation: 5,
+  },
+  voiceStatusText: {
+    letterSpacing: 0.5,
+    textTransform: 'uppercase',
+  },
+
   container: {
     flex: 1,
     backgroundColor: "#000000",
